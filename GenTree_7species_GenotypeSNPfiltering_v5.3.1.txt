@@ -1,0 +1,13 @@
+### Filtering SNPs for Exome capture data -- 7 species -- Reference Genome-based data -- v5.1
+# Load modules
+module load gcc/4.8.2 gdc vcftools/0.1.15 perl/5.18.4 zlib/1.2.8 samtools/1.9 plink/1.90 openblas/0.2.13_seq java/1.8.0_101 python/3.6.1 gatk/4.1.2.0 
+
+### Fagus sylvatica
+bcftools query -l FS_GM_v5.3.vcf.gz > FS_GM_v5.3.Samples.list
+awk '/^GR_/' FS_GM_v5.3.Samples.list > FS_GM_v5.3.1.ExclSamples.list
+gatk IndexFeatureFile -F FS_GM_v5.3.vcf.gz
+gatk SelectVariants --variant FS_GM_v5.3.vcf.gz --exclude-non-variants --exclude-sample-name FS_GM_v5.3.1.ExclSamples.list --output FS_GM_v5.3.1.vcf.gz
+
+### Quercus petraea
+gatk IndexFeatureFile -F QP_GM_v5.3.vcf.gz
+gatk SelectVariants --variant QP_GM_v5.3.vcf.gz --exclude-non-variants --exclude-sample-name QP_GM_v5.3.1.ExclSamples.list --output QP_GM_v5.3.1.vcf.gz

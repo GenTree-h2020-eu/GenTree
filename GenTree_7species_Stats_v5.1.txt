@@ -1,0 +1,52 @@
+### Get statistics for Exome capture data -- 7 species -- Reference Genome-based data -- v5.1
+# Load modules
+module load gcc/4.8.2 gdc java/1.8.0_101 python/3.6.1 gatk/4.1.2.0
+
+### Betula pendula
+gatk --java-options "-Xmx30G" VariantsToTable \
+  -V BP_GM_v5.1.vcf.gz \
+  -F CHROM -F POS -F QUAL -F AF -F AC -F QD -F DP -F MQ -F MQRankSum -F FS -F ReadPosRankSum -F SOR -F HET -F NO-CALL -F NSAMPLES -F MULTI-ALLELIC\
+  -O BP_GM_v5.1.stats.table
+
+
+### Fagus sylvatica
+gatk --java-options "-Xmx30G" VariantsToTable \
+  -V FS_GM_v5.1.vcf.gz \
+  -F CHROM -F POS -F QUAL -F AF -F AC -F QD -F DP -F MQ -F MQRankSum -F FS -F ReadPosRankSum -F SOR -F HET -F NO-CALL -F NSAMPLES -F MULTI-ALLELIC\
+  -O FS_GM_v5.1.stats.table
+
+
+### Picea abies
+gatk --java-options "-Xmx30G" VariantsToTable \
+  -V PA_GM_v5.1.vcf.gz \
+  -F CHROM -F POS -F QUAL -F AF -F AC -F QD -F DP -F MQ -F MQRankSum -F FS -F ReadPosRankSum -F SOR -F HET -F NO-CALL -F NSAMPLES -F MULTI-ALLELIC\
+  -O PA_GM_v5.1.stats.table
+
+
+### Pinus pinaster
+gatk --java-options "-Xmx30G" VariantsToTable \
+  -V PP_GM_v5.1.vcf.gz \
+  -F CHROM -F POS -F QUAL -F AF -F AC -F QD -F DP -F MQ -F MQRankSum -F FS -F ReadPosRankSum -F SOR -F HET -F NO-CALL -F NSAMPLES -F MULTI-ALLELIC\
+  -O PP_GM_v5.1.stats.table
+
+
+### Pinus sylvestris
+gatk --java-options "-Xmx30G" VariantsToTable \
+  -V PS_GM_v5.1.vcf.gz \
+  -F CHROM -F POS -F QUAL -F AF -F AC -F QD -F DP -F MQ -F MQRankSum -F FS -F ReadPosRankSum -F SOR -F HET -F NO-CALL -F NSAMPLES -F MULTI-ALLELIC\
+  -O PS_GM_v5.1.stats.table
+
+
+### Populus nigra
+gatk --java-options "-Xmx30G" VariantsToTable \
+  -V PO_GM_v5.1.vcf.gz \
+  -F CHROM -F POS -F QUAL -F AF -F AC -F QD -F DP -F MQ -F MQRankSum -F FS -F ReadPosRankSum -F SOR -F HET -F NO-CALL -F NSAMPLES -F MULTI-ALLELIC\
+  -O PO_GM_v5.1.stats.table
+
+
+### Quercus petraea
+gatk --java-options "-Xmx30G" VariantsToTable \
+  -V QP_GM_v5.1.vcf.gz \
+  -F CHROM -F POS -F QUAL -F AF -F AC -F QD -F DP -F MQ -F MQRankSum -F FS -F ReadPosRankSum -F SOR -F HET -F NO-CALL -F NSAMPLES -F MULTI-ALLELIC\
+  -O QP_GM_v5.1.stats.table
+

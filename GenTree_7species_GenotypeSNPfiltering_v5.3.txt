@@ -1,0 +1,228 @@
+### Filtering SNPs for Exome capture data -- 7 species -- Reference Genome-based data -- v5.1
+# Load modules
+module load gcc/4.8.2 gdc vcftools/0.1.15 perl/5.18.4 zlib/1.2.8 samtools/1.9 plink/1.90 openblas/0.2.13_seq java/1.8.0_101 python/3.6.1 gatk/4.1.2.0 
+
+### Betula pendula
+# DepthBySample (DP); recode as NA SNPs with a coverage < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf BP_GM_v3.1.recode.vcf.gz --minDP 8 --recode --recode-INFO-all --out BP_GM_v3.1.recode1"
+bgzip -c BP_GM_v3.1.recode1.recode.vcf > BP_GM_v3.1.DP8.vcf.gz
+rm BP_GM_v3.1.recode1.recode.vcf
+
+# GenotypeQualityBySample (GQ); recode as NA SNPs with a quality < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf BP_GM_v3.1.DP8.vcf.gz --minGQ 20 --recode --recode-INFO-all --out BP_GM_v3.1.DP8"
+bgzip -c BP_GM_v3.1.DP8.recode.vcf > BP_GM_v3.1.DP8.GQ20.vcf.gz
+rm BP_GM_v3.1.DP8.recode.vcf
+
+# Exclude the extra-sample(s) unwanted and newly generated monomorphic sites
+bcftools query -l BP_GM_v3.1.DP8.GQ20.vcf.gz > BP_GM_v3.1.DP8.GQ20.Samples.list
+awk '/^RU_BP_22_/' BP_GM_v3.1.DP8.GQ20.Samples.list > BP_GM_v3.1.DP8.GQ20.ExclSamples.list
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk IndexFeatureFile -F BP_GM_v3.1.DP8.GQ20.vcf.gz"
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk SelectVariants --variant BP_GM_v3.1.DP8.GQ20.vcf.gz --exclude-non-variants --exclude-sample-name BP_GM_v3.1.DP8.GQ20.ExclSamples.list --output BP_GM_v3.1.DP8.GQ20.ExclSamples.vcf.gz"
+
+# Exclude SNPs with more than 50% missing data
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf BP_GM_v3.1.DP8.GQ20.ExclSamples.vcf.gz --max-missing 0.5 --recode --recode-INFO-all --out BP_GM_v3.1.DP8.GQ20.ExclSamples"
+bgzip -c BP_GM_v3.1.DP8.GQ20.ExclSamples.recode.vcf > BP_GM_v3.1.DP8.GQ20.ExclSamples.NA05.vcf.gz
+rm BP_GM_v3.1.DP8.GQ20.ExclSamples.recode.vcf
+cp BP_GM_v3.1.DP8.GQ20.ExclSamples.NA05.vcf.gz BP_GM_v4.3.vcf.gz
+
+# Calculate proportion of missing data per sample
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "vcftools --gzvcf BP_GM_v4.3.vcf.gz --missing-indv --out BP_GM_v4.3"
+
+# Identify samples with more than 50% missing calls
+awk '$5 > 0.5' BP_GM_v4.3.imiss | cut -f1 > BP_GM_v4.3.ExclSamples.list
+
+# Exclude samples and newly generated monomorphic sites
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk IndexFeatureFile -F BP_GM_v4.3.vcf.gz"
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk SelectVariants --variant BP_GM_v4.3.vcf.gz --exclude-non-variants --exclude-sample-name BP_GM_v4.3.ExclSamples.list --output BP_GM_v5.3.vcf.gz"
+
+# Remove mitochondrial and chloroplast SNPs
+tabix BP_GM_v5.3.vcf.gz
+bcftools view -T ^BP_mito_chloro.bed -Oz BP_GM_v5.3.vcf.gz > BP_GM_v5.3.noMitoChloro.vcf.gz
+rm BP_GM_v5.3.vcf.gz
+cp BP_GM_v5.3.noMitoChloro.vcf.gz BP_GM_v5.3.vcf.gz
+gatk IndexFeatureFile -F BP_GM_v5.3.vcf.gz
+
+
+### Fagus sylvatica
+# DepthBySample (DP); recode as NA SNPs with a coverage < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf FS_GM_v3.1.recode.vcf.gz --minDP 8 --recode --recode-INFO-all --out FS_GM_v3.1.recode1"
+bgzip -c FS_GM_v3.1.recode1.recode.vcf > FS_GM_v3.1.DP8.vcf.gz
+rm FS_GM_v3.1.recode1.recode.vcf
+
+# GenotypeQualityBySample (GQ); recode as NA SNPs with a quality < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf FS_GM_v3.1.DP8.vcf.gz --minGQ 20 --recode --recode-INFO-all --out FS_GM_v3.1.DP8"
+bgzip -c FS_GM_v3.1.DP8.recode.vcf > FS_GM_v3.1.DP8.GQ20.vcf.gz
+rm FS_GM_v3.1.DP8.recode.vcf
+
+# Exclude SNPs with more than 50% missing data
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf FS_GM_v3.1.DP8.GQ20.vcf.gz --max-missing 0.5 --recode --recode-INFO-all --out FS_GM_v3.1.DP8.GQ20"
+bgzip -c FS_GM_v3.1.DP8.GQ20.recode.vcf > FS_GM_v3.1.DP8.GQ20.NA05.vcf.gz
+rm FS_GM_v3.1.DP8.GQ20.recode.vcf
+cp FS_GM_v3.1.DP8.GQ20.NA05.vcf.gz FS_GM_v4.3.vcf.gz
+
+# Calculate proportion of missing data per sample
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "vcftools --gzvcf FS_GM_v4.3.vcf.gz --missing-indv --out FS_GM_v4.3"
+
+# Identify samples with more than 50% missing calls
+awk '$5 > 0.5' FS_GM_v4.3.imiss | cut -f1 > FS_GM_v4.3.ExclSamples.list
+
+# Exclude samples and newly generated monomorphic sites
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk IndexFeatureFile -F FS_GM_v4.3.vcf.gz"
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk SelectVariants --variant FS_GM_v4.3.vcf.gz --exclude-non-variants --exclude-sample-name FS_GM_v4.3.ExclSamples.list --output FS_GM_v5.3.vcf.gz"
+
+# Exclude Greece populations and newly generated monomorphic sites
+bcftools query -l FS_GM_v5.3.vcf.gz > FS_GM_v5.3.Samples.list
+awk '/^GR_/' FS_GM_v5.3.Samples.list > FS_GM_v5.3.ExclSamples.list
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk IndexFeatureFile -F FS_GM_v5.3.vcf.gz"
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk SelectVariants --variant FS_GM_v5.3.vcf.gz --exclude-non-variants --exclude-sample-name FS_GM_v5.3.ExclSamples.list --output FS_GM_v5.3.1.vcf.gz"
+
+
+### Picea abies
+# DepthBySample (DP); recode as NA SNPs with a coverage < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf PA_GM_v3.1.recode.vcf.gz --minDP 8 --recode --recode-INFO-all --out PA_GM_v3.1.recode1"
+bgzip -c PA_GM_v3.1.recode1.recode.vcf > PA_GM_v3.1.DP8.vcf.gz
+rm PA_GM_v3.1.recode1.recode.vcf
+
+# GenotypeQualityBySample (GQ); recode as NA SNPs with a quality < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf PA_GM_v3.1.DP8.vcf.gz --minGQ 20 --recode --recode-INFO-all --out PA_GM_v3.1.DP8"
+bgzip -c PA_GM_v3.1.DP8.recode.vcf > PA_GM_v3.1.DP8.GQ20.vcf.gz
+rm PA_GM_v3.1.DP8.recode.vcf
+
+# Exclude SNPs with more than 50% missing data
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf PA_GM_v3.1.DP8.GQ20.vcf.gz --max-missing 0.5 --recode --recode-INFO-all --out PA_GM_v3.1.DP8.GQ20"
+bgzip -c PA_GM_v3.1.DP8.GQ20.recode.vcf > PA_GM_v3.1.DP8.GQ20.NA05.vcf.gz
+rm PA_GM_v3.1.DP8.GQ20.recode.vcf
+cp PA_GM_v3.1.DP8.GQ20.NA05.vcf.gz PA_GM_v4.3.vcf.gz
+
+# Calculate proportion of missing data per sample
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "vcftools --gzvcf PA_GM_v4.3.vcf.gz --missing-indv --out PA_GM_v4.3"
+
+# Identify samples with more than 50% missing calls
+awk '$5 > 0.5' PA_GM_v4.3.imiss | cut -f1 > PA_GM_v4.3.ExclSamples.list
+
+# Exclude samples and newly generated monomorphic sites
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk IndexFeatureFile -F PA_GM_v4.3.vcf.gz"
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk SelectVariants --variant PA_GM_v4.3.vcf.gz --exclude-non-variants --exclude-sample-name PA_GM_v4.3.ExclSamples.list --output PA_GM_v5.3.vcf.gz"
+
+
+### Pinus pinaster
+# DepthBySample (DP); recode as NA SNPs with a coverage < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf PP_GM_v3.1.recode.vcf.gz --minDP 8 --recode --recode-INFO-all --out PP_GM_v3.1.recode1"
+bgzip -c PP_GM_v3.1.recode1.recode.vcf > PP_GM_v3.1.DP8.vcf.gz
+rm PP_GM_v3.1.recode1.recode.vcf
+
+# GenotypeQualityBySample (GQ); recode as NA SNPs with a quality < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf PP_GM_v3.1.DP8.vcf.gz --minGQ 20 --recode --recode-INFO-all --out PP_GM_v3.1.DP8"
+bgzip -c PP_GM_v3.1.DP8.recode.vcf > PP_GM_v3.1.DP8.GQ20.vcf.gz
+rm PP_GM_v3.1.DP8.recode.vcf
+
+# Exclude SNPs with more than 50% missing data
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf PP_GM_v3.1.DP8.GQ20.vcf.gz --max-missing 0.5 --recode --recode-INFO-all --out PP_GM_v3.1.DP8.GQ20"
+bgzip -c PP_GM_v3.1.DP8.GQ20.recode.vcf > PP_GM_v3.1.DP8.GQ20.NA05.vcf.gz
+rm PP_GM_v3.1.DP8.GQ20.recode.vcf
+cp PP_GM_v3.1.DP8.GQ20.NA05.vcf.gz PP_GM_v4.3.vcf.gz
+
+# Calculate proportion of missing data per sample
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "vcftools --gzvcf PP_GM_v4.3.vcf.gz --missing-indv --out PP_GM_v4.3"
+
+# Identify samples with more than 50% missing calls
+awk '$5 > 0.5' PP_GM_v4.3.imiss | cut -f1 > PP_GM_v4.3.ExclSamples.list
+
+# Exclude samples and newly generated monomorphic sites
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk IndexFeatureFile -F PP_GM_v4.3.vcf.gz"
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk SelectVariants --variant PP_GM_v4.3.vcf.gz --exclude-non-variants --exclude-sample-name PP_GM_v4.3.ExclSamples.list --output PP_GM_v5.3.vcf.gz"
+
+
+### Pinus sylvestris
+# DepthBySample (DP); recode as NA SNPs with a coverage < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf PS_GM_v3.1.recode.vcf.gz --minDP 8 --recode --recode-INFO-all --out PS_GM_v3.1.recode1"
+bgzip -c PS_GM_v3.1.recode1.recode.vcf > PS_GM_v3.1.DP8.vcf.gz
+rm PS_GM_v3.1.recode1.recode.vcf
+
+# GenotypeQualityBySample (GQ); recode as NA SNPs with a quality < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf PS_GM_v3.1.DP8.vcf.gz --minGQ 20 --recode --recode-INFO-all --out PS_GM_v3.1.DP8"
+bgzip -c PS_GM_v3.1.DP8.recode.vcf > PS_GM_v3.1.DP8.GQ20.vcf.gz
+rm PS_GM_v3.1.DP8.recode.vcf
+
+# Exclude SNPs with more than 50% missing data
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf PS_GM_v3.1.DP8.GQ20.vcf.gz --max-missing 0.5 --recode --recode-INFO-all --out PS_GM_v3.1.DP8.GQ20"
+bgzip -c PS_GM_v3.1.DP8.GQ20.recode.vcf > PS_GM_v3.1.DP8.GQ20.NA05.vcf.gz
+rm PS_GM_v3.1.DP8.GQ20.recode.vcf
+cp PS_GM_v3.1.DP8.GQ20.NA05.vcf.gz PS_GM_v4.3.vcf.gz
+
+# Calculate proportion of missing data per sample
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "vcftools --gzvcf PS_GM_v4.3.vcf.gz --missing-indv --out PS_GM_v4.3"
+
+# Identify samples with more than 50% missing calls
+awk '$5 > 0.5' PS_GM_v4.3.imiss | cut -f1 > PS_GM_v4.3.ExclSamples.list
+
+# Exclude samples and newly generated monomorphic sites
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk IndexFeatureFile -F PS_GM_v4.3.vcf.gz"
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk SelectVariants --variant PS_GM_v4.3.vcf.gz --exclude-non-variants --exclude-sample-name PS_GM_v4.3.ExclSamples.list --output PS_GM_v5.3.vcf.gz"
+
+
+### Populus nigra
+# DepthBySample (DP); recode as NA SNPs with a coverage < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf PO_GM_v3.1.recode.vcf.gz --minDP 8 --recode --recode-INFO-all --out PO_GM_v3.1.recode1"
+bgzip -c PO_GM_v3.1.recode1.recode.vcf > PO_GM_v3.1.DP8.vcf.gz
+rm PO_GM_v3.1.recode1.recode.vcf
+
+# GenotypeQualityBySample (GQ); recode as NA SNPs with a quality < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf PO_GM_v3.1.DP8.vcf.gz --minGQ 20 --recode --recode-INFO-all --out PO_GM_v3.1.DP8"
+bgzip -c PO_GM_v3.1.DP8.recode.vcf > PO_GM_v3.1.DP8.GQ20.vcf.gz
+rm PO_GM_v3.1.DP8.recode.vcf
+
+# Exclude the extra-sample(s) unwanted and newly generated monomorphic sites
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk IndexFeatureFile -F PO_GM_v3.1.DP8.GQ20.vcf.gz"
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk SelectVariants --variant PO_GM_v3.1.DP8.GQ20.vcf.gz --exclude-non-variants --exclude-sample-name PO_GM_ClonesToExclude.list --output PO_GM_v3.1.DP8.GQ20.ExclSamples.vcf.gz"
+
+# Exclude SNPs with more than 50% missing data
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf PO_GM_v3.1.DP8.GQ20.ExclSamples.vcf.gz --max-missing 0.5 --recode --recode-INFO-all --out PO_GM_v3.1.DP8.GQ20.ExclSamples"
+bgzip -c PO_GM_v3.1.DP8.GQ20.ExclSamples.recode.vcf > PO_GM_v3.1.DP8.GQ20.ExclSamples.NA05.vcf.gz
+rm PO_GM_v3.1.DP8.GQ20.ExclSamples.recode.vcf
+cp PO_GM_v3.1.DP8.GQ20.ExclSamples.NA05.vcf.gz PO_GM_v4.3.vcf.gz
+
+# Calculate proportion of missing data per sample
+bsub -n1 -W 1:00 -R "rusage[mem=5000]" "vcftools --gzvcf PO_GM_v4.3.vcf.gz --missing-indv --out PO_GM_v4.3"
+
+# Identify samples with more than 50% missing calls
+awk '$5 > 0.5' PO_GM_v4.3.imiss | cut -f1 > PO_GM_v4.3.ExclSamples.list
+
+# Exclude samples and newly generated monomorphic sites
+bsub -n1 -W 1:00 -R "rusage[mem=5000]" "gatk IndexFeatureFile -F PO_GM_v4.3.vcf.gz"
+bsub -n1 -W 1:00 -R "rusage[mem=5000]" "gatk SelectVariants --variant PO_GM_v4.3.vcf.gz --exclude-non-variants --exclude-sample-name PO_GM_v4.3.ExclSamples.list --output PO_GM_v5.3.vcf.gz"
+
+# Exclude chloroplast and mitochondrial SNPs
+tabix PO_GM_v5.3.vcf.gz
+bcftools view -T ^PO_mito_chloro.bed -Oz PO_GM_v5.3.vcf.gz > PO_GM_v5.3.noMitoChloro.vcf.gz
+cp PO_GM_v5.3.noMitoChloro.vcf.gz PO_GM_v5.3.vcf.gz
+rm PO_GM_v5.3.noMitoChloro.vcf.gz
+gatk IndexFeatureFile -F PO_GM_v5.3.vcf.gz
+
+
+### Quercus petraea
+# DepthBySample (DP); recode as NA SNPs with a coverage < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf QP_GM_v3.1.recode.vcf.gz --minDP 8 --recode --recode-INFO-all --out QP_GM_v3.1.recode1"
+bgzip -c QP_GM_v3.1.recode1.recode.vcf > QP_GM_v3.1.DP8.vcf.gz
+rm QP_GM_v3.1.recode1.recode.vcf
+
+# GenotypeQualityBySample (GQ); recode as NA SNPs with a quality < X in genotypes
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf QP_GM_v3.1.DP8.vcf.gz --minGQ 20 --recode --recode-INFO-all --out QP_GM_v3.1.DP8"
+bgzip -c QP_GM_v3.1.DP8.recode.vcf > QP_GM_v3.1.DP8.GQ20.vcf.gz
+rm QP_GM_v3.1.DP8.recode.vcf
+
+# Exclude SNPs with more than 50% missing data
+bsub -n1 -W 12:00 -R "rusage[mem=5000]" "vcftools --gzvcf QP_GM_v3.1.DP8.GQ20.vcf.gz --max-missing 0.5 --recode --recode-INFO-all --out QP_GM_v3.1.DP8.GQ20"
+bgzip -c QP_GM_v3.1.DP8.GQ20.recode.vcf > QP_GM_v3.1.DP8.GQ20.NA05.vcf.gz
+rm QP_GM_v3.1.DP8.GQ20.recode.vcf
+cp QP_GM_v3.1.DP8.GQ20.NA05.vcf.gz QP_GM_v4.3.vcf.gz
+
+# Calculate proportion of missing data per sample
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "vcftools --gzvcf QP_GM_v4.3.vcf.gz --missing-indv --out QP_GM_v4.3"
+
+# Identify samples with more than 50% missing calls
+awk '$5 > 0.5' QP_GM_v4.3.imiss | cut -f1 > QP_GM_v4.3.ExclSamples.list
+
+# Exclude samples and newly generated monomorphic sites
+bsub -n4 -W 1:00 -R "rusage[mem=5000]" "gatk IndexFeatureFile -F QP_GM_v4.3.vcf.gz"
+bsub -n4 -W 1:00 -R "rusage[mem=10000]" "gatk SelectVariants --variant QP_GM_v4.3.vcf.gz --exclude-non-variants --exclude-sample-name QP_GM_v4.3.ExclSamples.list --output QP_GM_v5.3.vcf.gz"
