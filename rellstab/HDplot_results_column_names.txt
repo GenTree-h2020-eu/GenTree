@@ -1,0 +1,16 @@
+SNP.missing = SNP ID, composed of contig and pos
+MISS_IND = no. of missing individuals
+contig = contig name
+pos = position within the contig
+depth_a	= read count of reference allele in heterozygous individuals
+depth_b = read count of alternative allele in heterozygous individuals
+RAF	= reference allele frequency in heterozygous individuals
+num_hets = no. of heterozygotes
+num_samples	= total no. of samples
+total_depth	= total depth in heterozygous individuals
+depth_per_het = average depth per heterozygous individual
+hetPerc	= proportion of heterozygous individuals, ignoring missing data (wrong, don't use it!)
+std	= standard deviation (of depth_per_het???)
+D = deviation from (usual) read-ratio (1:1) (=z-score)
+H = correct proportion of heterozygous individuals, accounting for missing data
+AB = allele balance (=higher allele read count/lower allele read count)
