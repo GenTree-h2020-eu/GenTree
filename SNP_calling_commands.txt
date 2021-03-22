@@ -1,0 +1,42 @@
+# SNP calling (GATK v4.0.10.0)
+
+# 1) HaplotypeCaller (one job for each sample)
+gatk --java-options "-Djava.io.tmpdir=tmp -Xmx16G" HaplotypeCaller \
+--emit-ref-confidence GVCF \ 
+-R reference.fasta \
+-I alignment.bam \
+-O sample.g.vcf.gz \
+-L depth_summary_filter_5n.bed
+
+# 2) GenomicsDBImport (GenomicsDBImport was run in batches of 300 contigs each (specified with -L option). For high quality genomes it could be run at chr level).
+
+# To prepare the contigs list for each batch:
+split -a 4 -d -l 300 contigs_filter_5n.list batch_ --additional-suffix="_contig.list"
+
+gatk --java-options "-Djava.io.tmpdir=tmp -Xmx60G" GenomicsDBImport \
+--variant sample1.g.vcf.gz --variant sample2.g.vcf.gz --variant sample3.g.vcf.gz… etc etc \     #all samples
+--genomicsdb-workspace-path DB_path \
+-L batch_0000_contigs.list
+
+
+#3) GenotypeGVCFs (GenomicsDBImport was run for each DB generate with previous step):
+gatk --java-options "-Djava.io.tmpdir=tmp -Xmx12G" GenotypeGVCFs \
+-R reference.fasta \
+-V gendb:///DB_path \
+-O contigs_list.vcf.gz \
+-L batch_0000_contigs.list \ 
+-new-qual
+
+
+#4) VCF concatenation (bcftools v 1.7) and index creation 
+bcftools concat --file-list VCF_file_list.txt --output-type z --output variants.vcf.gz
+
+gatk --java-options "-Djava.io.tmpdir=tmp -Xmx12G" IndexFeatureFile \
+-F variants.vcf.gz
+
+#5) SNP selection
+gatk --java-options "-Djava.io.tmpdir=tmp -Xmx12" SelectVariants \
+-R reference.fasta \
+-V variants.vcf.gz \
+--select-type-to-include SNP \
+-O raw_SNPs.vcf.gz

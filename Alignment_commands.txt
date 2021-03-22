@@ -1,0 +1,54 @@
+# Alignment  (BWA mem v 0.7.17) and removal of multiple mapping reads  (samtools v 1.7)
+bwa mem -M -t 8 -R "${rg}" reference.fasta sample_clean_1.fastq.gz sample_clean_2.fastq.gz | samtools view -bS -q 10 - > alignment_q10.bam 
+
+# FixMateInformation and sort (picard-tools v2.17.11)
+java -Xmx10g -jar -Djava.io.tmpdir=tmp_folder picard.jar FixMateInformation \
+INPUT= alignment_q10.bam \
+OUTPUT= alignment_q10_FM.bam \
+SORT_ORDER=coordinate \
+VALIDATION_STRINGENCY=STRICT \
+ADD_MATE_CIGAR=True \
+ASSUME_SORTED=TRUE \
+TMP_DIR=tmp_folder
+
+# CleanSam (picard-tools v2.17.11)
+java -Xmx2g -jar -Djava.io.tmpdir= tmp_folder picard.jar CleanSam \
+INPUT= alignment_q10_FM.bam \
+OUTPUT= alignment_q10_FM_clean.bam \
+VALIDATION_STRINGENCY=STRICT \
+TMP_DIR=tmp_folder
+
+# MarkDuplicatesWithMateCigar (picard-tools v2.17.11)
+java -Xmx2g - jar -Djava.io.tmpdir= tmp_folder picard.jar MarkDuplicatesWithMateCigar \
+INPUT= alignment_q10_FM_clean.bam \
+OUTPUT= alignment_q10_FM_clean_markdup.bam \
+REMOVE_DUPLICATES=True \
+CREATE_INDEX=True \
+TMP_DIR=tmp_folder
+VALIDATION_STRINGENCY=LENIENT \
+METRICS_FILE=sample_duplicates_metrics.txt \
+MINIMUM_DISTANCE=400 \
+BLOCK_SIZE=10000000
+
+# Alignment index (samtools v1.7)
+samtools index alignment_q10_FM_clean_markdup.bam
+
+# Coverage statistics in order to select the relevant portion of the genome (remove areas of the genome with depth <= 5n; n=samplesize)
+# 1) Merge all samples in a single bam file (samtools v1.7):
+samtools merge \
+--threads 8 \
+merged_all_samples.bam \
+*_clean_markdup.bam > samtools_merging.log 2>&1
+
+# 2) Compute the overall depth at each position (samtools v1.7): 
+samtools depth merged_all_samples.bam | gzip -c - > samtools_depth_all_samples.tsv.gz
+
+# 3) Create a bed file that contains only positions with depth >= n_thresh (bedtools v2.29.0)
+n_bam=$(find ../cleaned_bams -name "*_clean_markdup.bam" | wc -l)
+n_thresh=$(echo "5 * ${n_bam}" | bc -l)
+zcat samtools_depth_all_samples.tsv.gz | \
+awk -v val="${n_thresh}" 'BEGIN{OFS="\t"; FS="\t"} {if($3 >= val){print $1, ($2 - 1), $2}}' | \
+bedtools merge -i - > depth_summary_filter_5n.bed
+
+# 4) Create the list with the selected contigs (for GATK GenomicsDBImport)
+cut -f 1 depth_summary_filter_5n.bed | uniq > contigs_filter_5n.list
