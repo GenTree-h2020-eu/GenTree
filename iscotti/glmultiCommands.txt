@@ -1,0 +1,7 @@
+# launched on FIX with 'at': see comment to each line for job ID
+/usr/bin/Rscript --verbose piAllModelSelection.R > piAllModelSelection.stdout 2> piAllModelSelection.stderr
+# job 95 at Wed Apr 28 13:51:00 2021
+/usr/bin/Rscript --verbose pi0div4ModelSelection.R > pi0div4ModelSelection.stdout 2> pi0div4ModelSelection.stderr
+# job 96 at Wed Apr 28 13:52:00 2021
+/usr/bin/Rscript --verbose sd_medianThetaModelSelection.R > sd_medianThetaModelSelection.stdout 2> sd_medianThetaModelSelection.stderr
+# job 97 at Wed Apr 28 13:53:00 2021
