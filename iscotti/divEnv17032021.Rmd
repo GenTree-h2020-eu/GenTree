@@ -1,0 +1,2053 @@
+---
+title: "Full analyses of regression between diversity stats and environmental variables"
+author: "Ivan Scotti, ivan.scotti@inra.fr"
+date: "12/9/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. 
+
+# 1. Preparation work
+
+Review of the material at hand:
+
+- **all_results_stairwayplot.tsv**: output of stairway plot analyses
+
+- **gtree_allspecies_env_dataset_extra_samples_20200908.csv**: all geographical and environmental variables from GenTree fieldwork. *For the        purposes of the current analysis, environmental data will not be used - only geographical coordinates are included.*.
+
+Notice that field data are published here: Opgenoorth L et al. (2021). The GenTree-Platform: linking phenotypes, tree-level environmental data, and genotypes in twelve major European forest tree species. *GigaScience*, in press.
+
+- **construct** folder and files therein: admixture values for all K values for all species. *The relevant K for each species is detailed below (as drawn from Table S6 in the paper)*. Exact files to get data from for each species are detailed below.
+
+- **Pi_estimates_vcf5.3.1** folder, **pi_CIs_1000replicates_allspecies.txt**: all pi statistics for all populations, both "raw" and from bootstraps.
+
+
+The way forward should include at least:
+
+- filling missing data when possible
+
+- centering/standardising the variables (use scale())
+
+- merging all data sets
+
+- running full models
+
+- running models with significant variables only
+
+- recording slopes and finding a way to compare them
+
+
+Start from data as recorded in 'gtree_allspecies_env_dataset_extra_samples_20200908.csv'
+
+
+## creating a full and clean data set
+
+```{r chunk001: define functions, load libraries, echo = F}
+#functions used to get pop-level summary statistics from single-tree data
+bioMeanBy <- function(x,y) by(data = x, INDICES = y, FUN = mean, na.rm = T)
+bioVarBy <- function(x,y) by(data = x, INDICES = y, FUN = var, na.rm = T)
+#function to scale, center the variables, by species
+scaleBy <- function(x,y) by(data = x, INDICES = y, FUN = scale)
+# function to compute derivatives from smoothed curves
+derivatives <- function(x)
+{
+  tmp.dt <- x[which(!duplicated(x$year)),]
+  temp_var <- tryCatch(smooth.Pspline(x = tmp.dt$year,
+                                     y = tmp.dt$Ne_median, 
+                                     df = 20,
+                                     spar = 20,
+                                     method = 2),
+                       error=function(e) e)
+  ifelse(inherits(temp_var, "error"),
+         {
+           sumstats <- rep(NA, 6)
+         },
+         {
+           tmp_smoothed.curve <- smooth.Pspline(x = tmp.dt$year,
+                                     y = tmp.dt$theta_per_site_median, 
+                                     df = 20,
+                                     spar = 20,
+                                     method = 2)
+  tmp.f1 <- predict(tmp_smoothed.curve, x = tmp.dt$year, nderiv=1)
+  tmp.f2 <- predict(tmp_smoothed.curve, x = tmp.dt$year, nderiv=2)
+  sumstats <- c(mean(tmp.f1), median(tmp.f1), sd(tmp.f1),mean(tmp.f2), median(tmp.f2), sd(tmp.f2))
+         })
+  names(sumstats) <- c("mean_f1", "median_f1", "sd_f1", "mean_f2", "median_f2", "sd_f2")
+  return(sumstats)
+}
+# function to replicate columns
+# taken from: https://www.r-bloggers.com/2011/09/a-quick-way-to-do-row-repeat-and-col-repeat-rep-row-rep-col/
+rep.col<-function(x,n){
+   matrix(rep(x,each=n), ncol=n, byrow=TRUE)
+}
+#required libraries
+library(data.table)
+library(stats)
+library(pspline)
+library(corrr)
+library(tidyverse)
+library(glmulti)
+```
+
+
+```{r chunk002: recreating full data}
+sourceEnvData.df <- read.csv(file = "gtree_allspecies_env_dataset_extra_samples_20200908.csv", header = T)
+#these are individual-level data (mostly)
+#obtaining the means:
+envDataMeans.df <- data.frame(apply(X = sourceEnvData.df[c(6:9,11:99)], FUN = bioMeanBy, y = sourceEnvData.df[,5], MARGIN = 2))
+#adding species names:
+speciesInEnvDataMeans <- matrix(unlist(strsplit(row.names(envDataMeans.df), split = "_")),ncol = 3, byrow = T)[,2]
+envDataMeans.df <-cbind(speciesInEnvDataMeans, envDataMeans.df)
+names(envDataMeans.df)[1] <- "species"
+#cleaning tmp files:
+rm(speciesInEnvDataMeans)
+```
+
+## an overview of variable distributions
+```{r chunk003: summary plots}
+# par(mfrow=c(3,3))
+## not used for this study: distribution of all variables
+# for (i in 2:93) hist(envDataMeans.df[,i], xlab=names(envDataMeans.df)[i], main="")
+# inspection of geo variables only:
+par(mfrow=c(1,2))
+for (i in 2:3) hist(envDataMeans.df[,i], xlab=names(envDataMeans.df)[i], main="")
+## not used:
+# for (i in 11:19) hist(envDataMeans.df[,i], xlab=names(envDataMeans.df)[i], main="")
+```
+
+##scaling the variables
+
+```{r chunk004: scaling env variables}
+tmp <- apply(X = envDataMeans.df[2:94], FUN = scaleBy, y = envDataMeans.df[,1], MARGIN = 2)
+## NOT working:
+#envDataMeans.scaled.df <- data.frame(apply(X = envDataMeans.df[2:93], FUN = scaleBy, y = envDataMeans.df[,1], MARGIN = 2))
+```
+
+## some checks are needed: is the order of populations within species maintained? 
+
+```{r chunk005: checks on the output of scaleBy function}
+# random pick of variables and species:
+par(mfrow=c(2,2))
+plot(x = subset(envDataMeans.df, species == "AA")$latwgs84, y = tmp$latwgs84$AA[,1], xlab = "Lat", ylab = "scaled Lat", main = "AA")
+plot(x = subset(envDataMeans.df, species == "PA")$bio11, y = tmp$bio11$PA[,1], xlab = "Bio 11", ylab = "scaled Bio 11", main = "PA")
+plot(x = subset(envDataMeans.df, species == "QP")$prec02, y = tmp$prec02$QP[,1], xlab = "Prec 02", ylab = "scaled Prec 02", main = "QP")
+plot(x = subset(envDataMeans.df, species == "PN")$tmax12, y = tmp$tmax12$PN[,1], xlab = "Tmax 12", ylab = "scaled Tmax 12", main = "PN")
+#everything seems to be fine
+#but population names must be repositioned in front of values
+```
+
+## reassembling a table
+
+```{r chunk006: reassembling table of scaled values}
+## NOT USED: test: attempt one
+# do.call(what = c, args = tmp$latwgs84) #oh, WOW.
+#
+# nesting do.call() within lapply(): 
+tmp2 <- lapply(X = tmp, FUN = function(x) do.call(what = c, args = x))
+# using do.call to fold the list into data.frame:
+envDataMeans.scaled.df <- data.frame(do.call(what = cbind, args = tmp2))
+#re-inserting species names in the table
+speciesInEnvDataMeansScaled <- unlist(by(data = envDataMeans.df, 
+                                         INDICES = envDataMeans.df$species, FUN = function(x) x$species))
+envDataMeans.scaled.df <- cbind(speciesInEnvDataMeansScaled, envDataMeans.scaled.df)
+names(envDataMeans.scaled.df)[1] <- "species"
+#getting reordered population names from envDataMeans.df
+row.names(envDataMeans.scaled.df) <- unlist(by(data = envDataMeans.df, INDICES = envDataMeans.df$species, FUN = row.names))
+#removing intemediate objects
+rm(list=c("tmp","tmp2"))
+#cleaning tmp files:
+rm(speciesInEnvDataMeansScaled)
+```
+
+## scaling and centering diversity statistics:
+
+### 1. stairway plot historical demography statistics:
+
+```{r chunk007: importing stairway plot data}
+system("gzip -dk  all_results_stairwayplot.tsv.gz")
+data.dt <- fread("all_results_stairwayplot.tsv", header = T, nrows = 1231558) # the second part of the file has single-pop data
+system("rm  all_results_stairwayplot.tsv")
+```
+
+
+Computing smoothed curve and derivatives
+As a guidance, I used https://stackoverflow.com/questions/43615469/how-to-calculate-the-slope-of-a-smoothed-curve-in-r
+
+```{r chunk008: smoothed curve tests}
+## NOT USED:
+# #using birch and CH pop 5 as test data set
+# tmp.dt <- subset(data.dt, species == "Bpendula" & pop == "CH_BP_05")
+# #there are duplicated x values, keep only one of each
+# tmp.dt <- tmp.dt[ which(!duplicated(tmp.dt$year)),]
+# tmp_smoothed.curve <- smooth.Pspline(x = tmp.dt$year,
+#                                      y = tmp.dt$Ne_median, 
+#                                      df = 20,
+#                                      spar = 20,
+#                                      method = 2)
+# tmp.f1 <- predict(tmp_smoothed.curve, x = tmp.dt$year, nderiv=1)
+# tmp.f2 <- predict(tmp_smoothed.curve, x = tmp.dt$year, nderiv=2)
+```
+
+
+```{r chunk009: apply derivatives function}
+derivatives.sumstats <- by(data = data.dt, INDICES = data.dt$pop, FUN = derivatives, simplify = F)
+derivatives.sumstats.df <- data.frame(do.call(what = rbind, args = derivatives.sumstats))
+write.table(file = "derivatives_sumstats.txt", x = derivatives.sumstats.df, sep = "\t", quote = F)
+
+```
+
+adding mean, median, and sd of theta
+
+```{r chunk010: theta itself}
+theta_means <- by(data = data.dt, INDICES = data.dt$pop, FUN = function(x) mean(x$theta_per_site_median), simplify = F)
+theta_medians <- by(data = data.dt, INDICES = data.dt$pop, FUN = function(x) median(x$theta_per_site_median), simplify = F)
+theta_sd <- by(data = data.dt, INDICES = data.dt$pop, FUN = function(x) sd(x$theta_per_site_median), simplify = F)
+theta_stats.df <- do.call(what = data.frame, args = list(unlist(theta_means), unlist(theta_medians), unlist(theta_sd)))
+names(theta_stats.df) <- c("mean_medianTheta", "median_medianTheta", "sd_medianTheta")
+all.sumstats.df <- merge(by = 0, theta_stats.df, derivatives.sumstats.df)
+row.names(all.sumstats.df) <- all.sumstats.df[,1]
+all.sumstats.df <- all.sumstats.df[,-1]
+#adding species names:
+speciesInTheta <- matrix(unlist(strsplit(row.names(all.sumstats.df), split = "_")),ncol = 3, byrow = T)[,2]
+all.sumstats.df <-cbind(speciesInTheta, all.sumstats.df)
+names(all.sumstats.df)[1] <- "species"
+#removing intermediate objects
+rm(speciesInTheta)
+```
+
+Actual scaling and centering
+
+```{r chunk011: scaling and centering theta values}
+tmp.theta <- apply(X = all.sumstats.df[2:10], FUN = scaleBy, y = all.sumstats.df[,1], MARGIN = 2)
+```
+
+reassembling a table
+
+```{r chunk012: reassembling table of scaled theta values}
+## NOT USED:
+# attempt one - testing
+# do.call(what = c, args = tmp$latwgs84) #oh, WOW.
+# nesting do.call() within lapply(): 
+tmp2.theta <- lapply(X = tmp.theta, FUN = function(x) do.call(what = c, args = x))
+# using do.call to fold the list into data.frame:
+all.sumstats.scaled.df <- data.frame(do.call(what = cbind, args = tmp2.theta))
+#getting reordered population names from envDataMeans.df
+row.names(all.sumstats.scaled.df) <- unlist(by(data = all.sumstats.df, INDICES = all.sumstats.df$species, FUN = row.names))
+#removing intermedaite objects
+rm(list=c("tmp.theta","tmp2.theta"))
+```
+
+### 2. pi values
+
+Importing pi stats
+
+```{r chunk013: import pi stats}
+# from bootstrap values: keeping only the central values
+piStats_boot.df <- read.table("pi_CIs_1000replicates_allspecies.txt", header = T)[,c(1:3,seq(4,20,4))]
+# from "empirical" values:
+#   for 0.2 missing values:
+#    getting file name list
+system(command = "ls Pi_estimates_vcf5.3.1/*0.2miss.txt > allSp_pi_per_pop0.2miss.filelist")
+filelist <- readLines("allSp_pi_per_pop0.2miss.filelist")
+#   importing tables
+for (i in filelist) assign(x = i, value = read.table(i, header = T))
+#   concatenating tables
+allSp_pi_per_pop0.2miss.df <- do.call(what = rbind, args = lapply(ls(pattern="0.2miss"), get))
+#   removing the "all plots" rows
+allSp_pi_per_pop0.2miss.df <- allSp_pi_per_pop0.2miss.df[allSp_pi_per_pop0.2miss.df$pop!="all_pops",]
+#     rearranging with pivot_larger: complete data
+allSp_pi_per_pop0.2miss_pi_complete.df <- allSp_pi_per_pop0.2miss.df[1:3] %>% 
+  pivot_wider(id_cols = 1, names_from = site.type, values_from = pi_complete_data)
+#       renaming columns
+names(allSp_pi_per_pop0.2miss_pi_complete.df)[2:7] <-paste0(names(allSp_pi_per_pop0.2miss_pi_complete.df)[2:7],"_complete_0.2miss")
+#     rearranging with pivot_larger: best orthologs
+allSp_pi_per_pop0.2miss_pi_bestOrtho.df <- allSp_pi_per_pop0.2miss.df[c(1,2,4)] %>% 
+  pivot_wider(id_cols = 1, names_from = site.type, values_from = pi_best_ortho)
+#       renaming columns
+names(allSp_pi_per_pop0.2miss_pi_bestOrtho.df)[2:7] <-paste0(names(allSp_pi_per_pop0.2miss_pi_bestOrtho.df)[2:7],"_bestOrtho_0.2miss")
+#     rearranging with pivot_larger: candidates
+allSp_pi_per_pop0.2miss_pi_candidates.df <- allSp_pi_per_pop0.2miss.df[c(1,2,5)] %>% 
+  pivot_wider(id_cols = 1, names_from = site.type, values_from = pi_candidate)
+#       renaming columns
+names(allSp_pi_per_pop0.2miss_pi_candidates.df)[2:7] <-paste0(names(allSp_pi_per_pop0.2miss_pi_candidates.df)[2:7],"_candidate_0.2miss")
+#    merging all tables
+allSp_pi_per_pop0.2miss_pi.df <- Reduce(merge, list(allSp_pi_per_pop0.2miss_pi_complete.df,
+                                                        allSp_pi_per_pop0.2miss_pi_bestOrtho.df,
+                                                        allSp_pi_per_pop0.2miss_pi_candidates.df))
+#   removing intermediate files
+rm(list=c("allSp_pi_per_pop0.2miss.df", 
+        "allSp_pi_per_pop0.2miss_pi_complete.df",
+        "allSp_pi_per_pop0.2miss_pi_bestOrtho.df",
+        "allSp_pi_per_pop0.2miss_pi_candidates.df"))
+rm(list=ls(pattern = "0.2miss.txt"))
+#
+#
+#   for 0.5 missing values:
+#    getting file name list
+system(command = "ls Pi_estimates_vcf5.3.1/*0.5miss.txt > allSp_pi_per_pop0.5miss.filelist")
+filelist <- readLines("allSp_pi_per_pop0.5miss.filelist")
+#   importing tables
+for (i in filelist) assign(x = i, value = read.table(i, header = T))
+#   concatenating tables
+allSp_pi_per_pop0.5miss.df <- do.call(what = rbind, args = lapply(ls(pattern="0.5miss"), get))
+#   removing the "all plots" rows
+allSp_pi_per_pop0.5miss.df <- allSp_pi_per_pop0.5miss.df[allSp_pi_per_pop0.5miss.df$pop!="all_pops",]
+#     rearranging with pivot_larger: complete data
+allSp_pi_per_pop0.5miss_pi_complete.df <- allSp_pi_per_pop0.5miss.df[1:3] %>% 
+  pivot_wider(id_cols = 1, names_from = site.type, values_from = pi_complete_data)
+#       renaming columns
+names(allSp_pi_per_pop0.5miss_pi_complete.df)[2:7] <-paste0(names(allSp_pi_per_pop0.5miss_pi_complete.df)[2:7],"_complete_0.5miss")
+#     rearranging with pivot_larger: best orthologs
+allSp_pi_per_pop0.5miss_pi_bestOrtho.df <- allSp_pi_per_pop0.5miss.df[c(1,2,4)] %>% 
+  pivot_wider(id_cols = 1, names_from = site.type, values_from = pi_best_ortho)
+#       renaming columns
+names(allSp_pi_per_pop0.5miss_pi_bestOrtho.df)[2:7] <-paste0(names(allSp_pi_per_pop0.5miss_pi_bestOrtho.df)[2:7],"_bestOrtho_0.5miss")
+#     rearranging with pivot_larger: candidates
+allSp_pi_per_pop0.5miss_pi_candidates.df <- allSp_pi_per_pop0.5miss.df[c(1,2,5)] %>% 
+  pivot_wider(id_cols = 1, names_from = site.type, values_from = pi_candidate)
+#       renaming columns
+names(allSp_pi_per_pop0.5miss_pi_candidates.df)[2:7] <-paste0(names(allSp_pi_per_pop0.5miss_pi_candidates.df)[2:7],"_candidate_0.5miss")
+#    merging all tables
+allSp_pi_per_pop0.5miss_pi.df <- Reduce(merge, list(allSp_pi_per_pop0.5miss_pi_complete.df,
+                                                        allSp_pi_per_pop0.5miss_pi_bestOrtho.df,
+                                                        allSp_pi_per_pop0.5miss_pi_candidates.df))
+#   removing intermediate files
+rm(list=c("allSp_pi_per_pop0.5miss.df", 
+        "allSp_pi_per_pop0.5miss_pi_complete.df",
+        "allSp_pi_per_pop0.5miss_pi_bestOrtho.df",
+        "allSp_pi_per_pop0.5miss_pi_candidates.df"))
+rm(list=ls(pattern = "0.5miss.txt"))
+#
+#
+#
+# merging 0.5miss and 0.2miss tables
+allSp_pi_per_pop0.5_0.2miss_pi.df <- merge(allSp_pi_per_pop0.5miss_pi.df,allSp_pi_per_pop0.2miss_pi.df)
+# merging empirical and bootstrap data
+piStats.df <- merge(piStats_boot.df, allSp_pi_per_pop0.5_0.2miss_pi.df)
+row.names(piStats.df) <- piStats.df$pop
+# removing intermediate files
+rm(list=c("allSp_pi_per_pop0.5miss_pi.df","allSp_pi_per_pop0.2miss_pi.df","piStats_boot.df","allSp_pi_per_pop0.5_0.2miss_pi.df"))
+rm(filelist)
+```
+
+
+Actual scaling and centering
+
+```{r chunk014: scaling and centering pi values}
+tmp.pi <- apply(X = piStats.df[4:44], FUN = scaleBy, y = piStats.df[,3], MARGIN = 2)
+```
+
+reassembling a table
+
+```{r chunk015: reassembling table of scaled pi values}
+#attempt one
+# do.call(what = c, args = tmp$latwgs84) #oh, WOW.
+# nesting do.call() within lapply(): 
+tmp2.pi <- lapply(X = tmp.pi, FUN = function(x) do.call(what = c, args = x))
+# using do.call to fold the list into data.frame:
+piStats.scaled.df <- data.frame(do.call(what = cbind, args = tmp2.pi))
+#adding species tags
+piStats.scaled.df <- cbind(unlist(by(data = piStats.df, INDICES = piStats.df$species, FUN = function(x) x[,3])),
+                                  piStats.scaled.df)
+names(piStats.scaled.df)[1] <- "species"
+#getting reordered population names from piStats.df
+row.names(piStats.scaled.df) <- unlist(by(data = piStats.df, INDICES = piStats.df$species, FUN = function(x) x[,1]))
+# removing intermediate objects
+rm(list=c("tmp.pi","tmp2.pi"))
+```
+
+
+## 3. Importing clustering info, scaling, centering
+
+*Numbers of layers with the best predictive power for each species* (from table S6 in the paper)
+
+
+Species           |K with highest predictive accuracy
+------------------|----------------------------------
+*Betula pendula*  |   4
+*Fagus sylvatica* |   8
+*Picea abies*   |  5
+*Populus nigra*     |   10
+*Pinus pinaster*  |  10
+*Pinus sylvestris*|   3
+*Quercus petraea* |   6
+
+The data corresponding to the matching K are imported for each species. 
+
+Notice that only the required files (and not the whole conStruct output) are stored in the *construct* folder.
+
+```{r chunk016: importing clustering info}
+# NB to be able to merge all tables, all of them need to have 10 columns, 
+# so some filling is required.
+# to achieve this, a variable with the absolute max(K) needs to be set:
+maxK <- 10
+#BP
+load("construct/BP/k4/k4_conStruct.results.Robj")
+BP_admixtureValues.df <- data.frame(conStruct.results$chain_1$MAP$admix.proportions)
+load("construct/BP/k4/k4_data.block.Robj")
+row.names(BP_admixtureValues.df) <- row.names(data.block$obsCov)
+# filling:
+tmp <- dim(BP_admixtureValues.df)[2]
+if (tmp<maxK) {
+             BP_admixtureValues.df <- cbind(BP_admixtureValues.df,
+                                            data.frame(rep.col(x = rep(NA, dim(BP_admixtureValues.df)[1]),
+                                                               n = maxK-dim(BP_admixtureValues.df)[2])))
+             names(BP_admixtureValues.df)[(tmp+1):maxK] <- paste0("X",(tmp+1):maxK)
+            }
+#FS
+load("construct/FS/k8/k8_conStruct.results.Robj")
+FS_admixtureValues.df <- data.frame(conStruct.results$chain_1$MAP$admix.proportions)
+load("construct/FS/k8/k8_data.block.Robj")
+row.names(FS_admixtureValues.df) <- row.names(data.block$obsCov)
+# filling:
+tmp <- dim(FS_admixtureValues.df)[2]
+if (tmp<maxK) {
+            FS_admixtureValues.df <- cbind(FS_admixtureValues.df,
+                                           data.frame(rep.col(x = rep(NA, dim(FS_admixtureValues.df)[1]),
+                                                              n = maxK-dim(FS_admixtureValues.df)[2])))
+            names(FS_admixtureValues.df)[(tmp+1):maxK] <- paste0("X",(tmp+1):maxK)
+            }
+#PA
+load("construct/PA/k5/k5_conStruct.results.Robj")
+PA_admixtureValues.df <- data.frame(conStruct.results$chain_1$MAP$admix.proportions)
+load("construct/PA/k5/k5_data.block.Robj")
+row.names(PA_admixtureValues.df) <- row.names(data.block$obsCov)
+# filling:
+tmp <- dim(PA_admixtureValues.df)[2]
+if (tmp<maxK) {
+            PA_admixtureValues.df <- cbind(PA_admixtureValues.df,
+                                           data.frame(rep.col(x = rep(NA, dim(PA_admixtureValues.df)[1]),
+                                                              n = maxK-dim(PA_admixtureValues.df)[2])))
+            names(PA_admixtureValues.df)[(tmp+1):maxK] <- paste0("X",(tmp+1):maxK)
+            }
+#PO
+load("construct/PO/k10/k10_conStruct.results.Robj")
+PO_admixtureValues.df <- data.frame(conStruct.results$chain_1$MAP$admix.proportions)
+load("construct/PO/k10/k10_data.block.Robj")
+row.names(PO_admixtureValues.df) <- row.names(data.block$obsCov)
+# filling:
+tmp <- dim(PO_admixtureValues.df)[2]
+if (tmp<maxK) {
+            PO_admixtureValues.df <- cbind(PO_admixtureValues.df,
+                                           data.frame(rep.col(x = rep(NA, dim(PO_admixtureValues.df)[1]),
+                                                              n = maxK-dim(PO_admixtureValues.df)[2])))
+            names(PO_admixtureValues.df)[(tmp+1):maxK] <- paste0("X",(tmp+1):maxK)
+}
+#PP
+load("construct/PP/k10/k10_conStruct.results.Robj")
+PP_admixtureValues.df <- data.frame(conStruct.results$chain_1$MAP$admix.proportions)
+load("construct/PP/k10/k10_data.block.Robj")
+row.names(PP_admixtureValues.df) <- row.names(data.block$obsCov)
+# filling:
+tmp <- dim(PP_admixtureValues.df)[2]
+if (tmp<maxK) {
+            PP_admixtureValues.df <- cbind(PP_admixtureValues.df,
+                                           data.frame(rep.col(x = rep(NA, dim(PP_admixtureValues.df)[1]),
+                                                              n = maxK-dim(PP_admixtureValues.df)[2])))
+            names(PP_admixtureValues.df)[(tmp+1):maxK] <- paste0("X",(tmp+1):maxK)
+}
+#PS
+load("construct/PS/k3/k3_conStruct.results.Robj")
+PS_admixtureValues.df <- data.frame(conStruct.results$chain_1$MAP$admix.proportions)
+load("construct/PS/k3/k3_data.block.Robj")
+row.names(PS_admixtureValues.df) <- row.names(data.block$obsCov)
+tmp <- dim(PS_admixtureValues.df)[2]
+if (tmp<maxK) {
+            PS_admixtureValues.df <- cbind(PS_admixtureValues.df,
+                                           data.frame(rep.col(x = rep(NA, dim(PS_admixtureValues.df)[1]),
+                                                              n = maxK-dim(PS_admixtureValues.df)[2])))
+            names(PS_admixtureValues.df)[(tmp+1):maxK] <- paste0("X",(tmp+1):maxK)
+}
+#QP
+load("construct/QP/k6/k6_conStruct.results.Robj")
+QP_admixtureValues.df <- data.frame(conStruct.results$chain_1$MAP$admix.proportions)
+load("construct/QP/k6/k6_data.block.Robj")
+row.names(QP_admixtureValues.df) <- row.names(data.block$obsCov)
+tmp <- dim(QP_admixtureValues.df)[2]
+if (tmp<maxK) {
+            QP_admixtureValues.df <- cbind(QP_admixtureValues.df,
+                                           data.frame(rep.col(x = rep(NA, dim(QP_admixtureValues.df)[1]),
+                                                              n = maxK-dim(QP_admixtureValues.df)[2])))
+            names(QP_admixtureValues.df)[(tmp+1):maxK] <- paste0("X",(tmp+1):maxK)
+}
+# merger of all tables:
+AllSp_admixtureValues.df <- do.call(what = rbind, args = list(BP_admixtureValues.df,
+                                                              FS_admixtureValues.df,
+                                                              PA_admixtureValues.df,
+                                                              PO_admixtureValues.df,
+                                                              PP_admixtureValues.df,
+                                                              PS_admixtureValues.df,
+                                                              QP_admixtureValues.df))
+AllSp_admixtureValues.df$PopID <- row.names(AllSp_admixtureValues.df)
+#adding species names
+speciesInAdmix <- matrix(unlist(strsplit(row.names(AllSp_admixtureValues.df), split = "_")),ncol = 3, byrow = T)[,2]
+AllSp_admixtureValues.df <-cbind(speciesInAdmix, AllSp_admixtureValues.df)
+names(AllSp_admixtureValues.df)[1] <- "species"
+## NOT USED
+#merging admixture info into data frames:
+# View(x = merge(AllSp_admixtureValues.df, bioClimPiClean.df[,-1], all.y = T))
+# bioClimPiClean.df <- merge(AllSp_admixtureValues.df, bioClimPiClean.df[,-1], all.y = T)[-c(87,88,142),]
+# names(bioClimPiClean.df)[2:3] <- c("admixLayer1", "admixLayer2")
+# Rmoval of intermediate objects:
+rm(list=c("conStruct.results","data.block","tmp","maxK","speciesInAdmix"))
+rm(list=c("BP_admixtureValues.df","FS_admixtureValues.df","PA_admixtureValues.df","PO_admixtureValues.df",
+          "PP_admixtureValues.df","PS_admixtureValues.df","QP_admixtureValues.df"))
+```
+
+Actual scaling and centering
+
+```{r chunk017: scaling and centering admix values}
+tmp.admix <- apply(X = AllSp_admixtureValues.df[2:(length(AllSp_admixtureValues.df)-1)], 
+                   FUN = scaleBy, y = AllSp_admixtureValues.df[,1], MARGIN = 2)
+```
+
+Reassembling a table:
+
+```{r chunk018: reassembling table of scaled admix values}
+#attempt one
+# do.call(what = c, args = tmp$latwgs84) #oh, WOW.
+# nesting do.call() within lapply(): 
+tmp2.admix <- lapply(X = tmp.admix, FUN = function(x) do.call(what = c, args = x))
+# using do.call to fold the list into data.frame:
+AllSp_admixtureValues.scaled.df <- data.frame(do.call(what = cbind, args = tmp2.admix))
+# reattaching species names
+AllSp_admixtureValues.scaled.df <- cbind(AllSp_admixtureValues.df$species, AllSp_admixtureValues.scaled.df)
+names(AllSp_admixtureValues.scaled.df)[1] <-  "species"
+#getting reordered population names from AllSp_admixtureValues.df
+row.names(AllSp_admixtureValues.scaled.df) <- unlist(by(data = AllSp_admixtureValues.df, INDICES = AllSp_admixtureValues.df$species, FUN = row.names))
+# removal of intermediate files
+rm(list = c("tmp.admix","tmp2.admix"))
+```
+
+## merging the explanatory (independent) variables into a single table
+
+Notice that for the current paper only *geographical data* are used - the remaining variables are not taken in.
+
+```{r chunk019: merger of geo, gen, and admix data (i.e. independent variables)}
+# species column removed from admix table
+allDivEnv.df <- merge(x = envDataMeans.scaled.df[1:3], y = AllSp_admixtureValues.scaled.df[-1], all.y = T, by = 0)
+row.names(allDivEnv.df) <- allDivEnv.df$Row.names
+allDivEnv.df <- allDivEnv.df[-1]
+names(allDivEnv.df)[-c(1:3)] <- c(paste0("AdmixLayer0", 1:9) ,"AdmixLayer10")
+# species column removed from piStats table
+allDivEnv.df <- merge(x = allDivEnv.df, y = piStats.scaled.df[-1], by = 0)
+row.names(allDivEnv.df) <- allDivEnv.df$Row.names
+allDivEnv.df <- allDivEnv.df[-1]
+allDivEnv.df <- merge(x = allDivEnv.df, y = all.sumstats.scaled.df, by = 0)
+row.names(allDivEnv.df) <- allDivEnv.df$Row.names
+names(allDivEnv.df)[1] <- "popId"
+```
+
+The full table produced above includes one line for one population of *Picea obovata*, named RU_OB_01. Being a single population, it cannot be treated the same way as the others. 
+
+It is therefore sensible to remove it now; a new object, named **allDivEnvStar.df**, is created and will be used for subsequent analyses; *allDivEnv.df* is stored for the record and no longer used.
+
+```{r chunk020: removal of P obovata row}
+allDivEnvStar.df <- allDivEnv.df[allDivEnv.df$popId !="RU_OB_01",]
+```
+
+# 2. Data analyses
+
+## a. Inspection of correlations between dependent variables (i.e., gen div statistics): this will be useful to avoid reporting redundant information
+
+```{r chunk021: correlation between dependent variables}
+#performed on normalised variables
+#allDivEnv.df[is.nan(allDivEnv.df)==T] <- NA
+pdf(file = "normalisedDivStatsPairwisePlots.pdf", width = 50, height = 50)
+plot(allDivEnvStar.df[15:64], pch = ".", col = "blue")
+dev.off()
+divStats.cor <- round(cor(allDivEnvStar.df[,15:64], use = "pairwise.complete.obs", method = "p"),2)
+corTest <- function(x,y)
+{
+  tmp <- list()
+  for (i in 1:ncol(y)) tmp[[i]] <- cor.test(x,y[,i], alternative = "t", method = "p", use = "pairwise.complete.obs")
+  names(tmp) <- colnames(y)
+  return(tmp)
+}
+divStats.cortest <- apply(X = allDivEnvStar.df[,15:64], MARGIN = 2, FUN = corTest,
+      y = allDivEnvStar.df[,15:64])
+#correlate(x = allDivEnv.df[-c(146, which(is.na(allDivEnv.df$mean_f1))),98:111])
+# test <- corTest(x = allDivEnv.df[-c(146, which(is.na(allDivEnv.df$mean_f1))),98],
+#         y = allDivEnv.df[-c(146, which(is.na(allDivEnv.df$mean_f1))),98:111])
+# cor.test(allDivEnv.df[-c(146, which(is.na(allDivEnv.df$mean_f1))),98], 
+#          allDivEnv.df[-c(146, which(is.na(allDivEnv.df$mean_f1))),99])
+# 
+# 
+# extracting p-values
+divStats.cortest_pvals <- lapply(X = divStats.cortest, FUN = function(x) lapply(X = x, function(x) x$p.value))
+# identifying significant correlations with bonferroni correction
+#building a matrix of significance
+divStats.cortest_signif <- matrix((unlist(divStats.cortest_pvals)) < 0.05 / 50^2, ncol = 50, byrow = T)
+row.names(divStats.cortest_signif) <- row.names(divStats.cor)
+colnames(divStats.cortest_signif) <- colnames(divStats.cor)
+
+#which((unlist(divStats.cortest_pvals)) < 0.05 / 14^2)
+#keeping only significant values:
+divStats.cortest_signif_cor <- divStats.cor * divStats.cortest_signif
+divStats.cortest_signif_cor[divStats.cortest_signif_cor == 0] <- NA
+write.table(x = divStats.cortest_signif_cor, file = "divStats_correlations.txt")
+```
+
+### Conclusions based on the above correlation analyses
+
+Most of the variables are tightly correlated. Globally, *three (partially) independent signals* can be singled out, corresponding to the variables **all_pi**, **pi0div4**, and **sd_medianTheta**
+
+## b. Variable selection
+
+### Linear Models for the 1st GenTree WP4 paper: including only *Latitude, Longitude, and Admixture* (for all Layers)
+
+Subdividing the object by species:
+
+```{r chunk022: subdividing table by species}
+bySpecies.ls <- by(allDivEnvStar.df, INDICES = factor(allDivEnvStar.df$species), FUN = function(x) x)
+# the number of admix layers for each species must also be recorded in a vector
+nbLayers <- c(4,8,5,10,10,3,6)
+```
+
+Running model selection for each dependent variable (i.e. each diversity statistic).
+
+Notice that models with all variables and all interactions do not converge. 
+
+(Yet, I'm currently unable to pass a formula with specific components (say, a particular interaction) and have the function take them int account: if level = 1, only terms are considered; if level = 2, error message)
+
+I therefore constrain the models to use only main effects, *ignoring interactions*.
+
+```{r chunk023: species-by-species model for piAll, echo = FALSE}
+# step_piAll <- function(x)
+# {
+#   #cat("\n********************************\n",unique(x$species),"\n")
+#   # init_mod <- lm(pi_all ~ ., data = x)
+#   # step(init_mod, scope = . ~ .^2, direction = 'forward', k = log(nrow(x)))
+#   glmulti(pi_all ~ latwgs84 + lonwgs84 + AdmixLayer1, data = x, 
+#           level = 2, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+#   # step(glm(formula = pi_all ~ 1, data = x),
+#   #                    scope = ~ (latwgs84 + lonwgs84 + AdmixLayer1)^2,
+#   #                    direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_piAll_T4_4", append = T)
+# piAll_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_piAll)
+# sink()
+# #testing
+# test <- glmulti(pi_all ~ latwgs84 + lonwgs84 + AdmixLayer1, data = subset(allDivEnv.df, species = "BP"), 
+#           level = 2, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+piAll_by_species_T4_4.glm <- list()
+for (i in 1:7) 
+  {
+  varList <- names(allDivEnvStar.df)[c(3:(4+nbLayers[i]-1))]
+  formula <- paste0("all_pi~",
+                    paste(varList,collapse="+") #,
+                    # "+",
+                    # paste(paste(varList[1],varList[3:length(varList)],sep="*"),collapse="+"),
+                    # "+",
+                    # paste(paste(varList[2],varList[3:length(varList)],sep="*"),collapse="+")
+                    )
+  # formula <- c(varList,
+  #              paste(varList[1],varList[3:length(varList)],sep="*"),
+  #              paste(varList[2],varList[3:length(varList)],sep="*"))
+  piAll_by_species_T4_4.glm[[i]] <- 
+  glmulti(y = formula,
+          data = bySpecies.ls[[i]], 
+          level = 1, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+  }
+names(piAll_by_species_T4_4.glm) <- names(bySpecies.ls)
+```
+
+
+```{r chunk024: species-by-species model for pi0div4, echo = F}
+# step_pi_0fold <- function(x)
+# {
+#   cat("\n********************************\n",unique(x$species),"\n")
+#   step(glm(formula = pi_0fold ~ 1, data = x),
+#                      scope = ~ latwgs84 + lonwgs84 + AdmixLayer1,
+#                      direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_pi_0fold_T4_4", append = T)
+# pi_0fold_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_pi_0fold)
+# sink()
+pi0div4_by_species_T4_4.glm <- list()
+for (i in 1:7) 
+  {
+  varList <- names(allDivEnvStar.df)[c(3:(4+nbLayers[i]-1))]
+  formula <- paste0("pi0div4~",
+                    paste(varList,collapse="+")#,
+                    # "+",
+                    # paste(paste(varList[1],varList[3:length(varList)],sep="*"),collapse="+"),
+                    # "+",
+                    # paste(paste(varList[2],varList[3:length(varList)],sep="*"),collapse="+")
+                    )
+  pi0div4_by_species_T4_4.glm[[i]] <- 
+  glmulti(y = formula,
+          data = bySpecies.ls[[i]], 
+          level = 1, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+  }
+names(pi0div4_by_species_T4_4.glm) <- names(bySpecies.ls)
+
+```
+
+
+```{r species-by-species model for pi4fold NOT USED}
+# step_pi_4fold <- function(x)
+# {
+#   cat("\n********************************\n",unique(x$species),"\n")
+#   step(glm(formula = pi_4fold ~ 1, data = x),
+#                      scope = ~ latwgs84 + lonwgs84 + AdmixLayer1,
+#                      direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_pi_4fold_T4_4", append = T)
+# pi_4fold_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_pi_4fold)
+# sink()
+# pi_4fold_by_species_T4_4.glm <- list()
+# bySpecies.ls <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = function(x) x)
+# for (i in 1:7) 
+#   {
+#   pi_4fold_by_species_T4_4.glm[[i]] <- 
+#   glmulti(pi_4fold ~ latwgs84 + lonwgs84 + AdmixLayer1, data = bySpecies.ls[[i]], 
+#           level = 2, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+#   }
+# names(pi_4fold_by_species_T4_4.glm) <- names(bySpecies.ls)
+
+```
+
+
+```{r species-by-species model for pi0/p4 NOT USED}
+# step_pi0_pi4 <- function(x)
+# {
+#   cat("\n********************************\n",unique(x$species),"\n")
+#   step(glm(formula = pi0_pi4 ~ 1, data = x),
+#                      scope = ~  latwgs84 + lonwgs84 + AdmixLayer1,
+#                      direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_pi0_pi4_T4_4", append = T)
+# pi0_pi4_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_pi0_pi4)
+# sink()
+# pi0_pi4_by_species_T4_4.glm <- list()
+# bySpecies.ls <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = function(x) x)
+# for (i in 1:7) 
+#   {
+#   pi0_pi4_by_species_T4_4.glm[[i]] <- 
+#   glmulti(pi0_pi4 ~ latwgs84 + lonwgs84 + AdmixLayer1, data = bySpecies.ls[[i]], 
+#           level = 2, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+#   }
+# names(pi0_pi4_by_species_T4_4.glm) <- names(bySpecies.ls)
+
+```
+
+
+```{r species-by-species model for piPutNeu NOT USED}
+# step_pi_putNeu <- function(x)
+# {
+#   cat("\n********************************\n",unique(x$species),"\n")
+#   step(glm(formula = pi_putNeu ~ 1, data = x),
+#                      scope = ~  latwgs84 + lonwgs84 + AdmixLayer1,
+#                      direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_pi_putNeu_T4_4", append = T)
+# pi_putNeu_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_pi_putNeu)
+# sink()
+# pi_putNeu_by_species_T4_4.glm <- list()
+# bySpecies.ls <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = function(x) x)
+# for (i in 1:7) 
+#   {
+#   pi_putNeu_by_species_T4_4.glm[[i]] <- 
+#   glmulti(pi_putNeu ~ latwgs84 + lonwgs84 + AdmixLayer1, data = bySpecies.ls[[i]], 
+#           level = 2, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+#   }
+# names(pi_putNeu_by_species_T4_4.glm) <- names(bySpecies.ls)
+
+```
+
+
+```{r species-by-species model for mean_f1 NOT USED}
+# step_mean_f1 <- function(x)
+# {
+#   cat("\n********************************\n",unique(x$species),"\n")
+#   step(glm(formula = mean_f1 ~ 1, data = x),
+#                      scope = ~ latwgs84 + lonwgs84 + AdmixLayer1,
+#                      direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_mean_f1(theta)_T4_4", append = T)
+# mean_f1_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_mean_f1)
+# sink()
+# mean_f1_by_species_T4_4.glm <- list()
+# bySpecies.ls <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = function(x) x)
+# for (i in 1:7) 
+#   {
+#   mean_f1_by_species_T4_4.glm[[i]] <- 
+#   glmulti(mean_f1 ~ latwgs84 + lonwgs84 + AdmixLayer1, data = bySpecies.ls[[i]], 
+#           level = 2, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+#   }
+# names(mean_f1_by_species_T4_4.glm) <- names(bySpecies.ls)
+
+```
+
+
+
+```{r species-by-species model for median_f1 NOT USED}
+# step_median_f1 <- function(x)
+# {
+#   cat("\n********************************\n",unique(x$species),"\n")
+#   step(glm(formula = median_f1 ~ 1, data = x),
+#                      scope = ~ latwgs84 + lonwgs84 + AdmixLayer1,
+#                      direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_median_f1(theta)_T4_4", append = T)
+# median_f1_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_median_f1)
+# sink()
+# median_f1_by_species_T4_4.glm <- list()
+# bySpecies.ls <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = function(x) x)
+# for (i in 1:7) 
+#   {
+#   median_f1_by_species_T4_4.glm[[i]] <- 
+#   glmulti(median_f1 ~ latwgs84 + lonwgs84 + AdmixLayer1, data = bySpecies.ls[[i]], 
+#           level = 2, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+#   }
+# names(median_f1_by_species_T4_4.glm) <- names(bySpecies.ls)
+
+```
+
+
+```{r species-by-species model for sd_f1 NOT USED}
+# step_sd_f1 <- function(x)
+# {
+#   cat("\n********************************\n",unique(x$species),"\n")
+#   step(glm(formula = sd_f1 ~ 1, data = x),
+#                      scope = ~ latwgs84 + lonwgs84 + AdmixLayer1,
+#                      direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_sd_f1(theta)_T4_4", append = T)
+# sd_f1_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_sd_f1)
+# sink()
+# sd_f1_by_species_T4_4.glm <- list()
+# bySpecies.ls <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = function(x) x)
+# for (i in 1:7) 
+#   {
+#   sd_f1_by_species_T4_4.glm[[i]] <- 
+#   glmulti(sd_f1 ~ latwgs84 + lonwgs84 + AdmixLayer1, data = bySpecies.ls[[i]], 
+#           level = 2, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+#   }
+# names(sd_f1_by_species_T4_4.glm) <- names(bySpecies.ls)
+
+```
+
+
+```{r species-by-species model for mean_f2 NOT USED}
+# step_mean_f2 <- function(x)
+# {
+#   cat("\n********************************\n",unique(x$species),"\n")
+#   step(glm(formula = mean_f2 ~ 1, data = x),
+#                      scope = ~ latwgs84 + lonwgs84 + AdmixLayer1,
+#                      direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_mean_f2(theta)_T4_4", append = T)
+# mean_f2_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_mean_f2)
+# sink()
+# mean_f2_by_species_T4_4.glm <- list()
+# bySpecies.ls <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = function(x) x)
+# for (i in 1:7) 
+#   {
+#   mean_f2_by_species_T4_4.glm[[i]] <- 
+#   glmulti(mean_f2 ~ latwgs84 + lonwgs84 + AdmixLayer1, data = bySpecies.ls[[i]], 
+#           level = 2, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+#   }
+# names(mean_f2_by_species_T4_4.glm) <- names(bySpecies.ls)
+
+```
+
+
+```{r species-by-species model for median_f2 NOT USED}
+# step_median_f2 <- function(x)
+# {
+#   cat("\n********************************\n",unique(x$species),"\n")
+#   step(glm(formula = median_f2 ~ 1, data = x),
+#                      scope = ~ latwgs84 + lonwgs84 + AdmixLayer1,
+#                      direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_median_f2(theta)_T4_4", append = T)
+# median_f2_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_median_f2)
+# sink()
+# median_f2_by_species_T4_4.glm <- list()
+# bySpecies.ls <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = function(x) x)
+# for (i in 1:7) 
+#   {
+#   median_f2_by_species_T4_4.glm[[i]] <- 
+#   glmulti(median_f2 ~ latwgs84 + lonwgs84 + AdmixLayer1, data = bySpecies.ls[[i]], 
+#           level = 2, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+#   }
+# names(median_f2_by_species_T4_4.glm) <- names(bySpecies.ls)
+
+```
+
+
+```{r species-by-species model for sd_f2 NOT USED}
+# step_sd_f2 <- function(x)
+# {
+#   cat("\n********************************\n",unique(x$species),"\n")
+#   step(glm(formula = sd_f2 ~ 1, data = x),
+#                      scope = ~ latwgs84 + lonwgs84 + AdmixLayer1,
+#                      direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_sd_f2(theta)_T4_4", append = T)
+# sd_f2_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_sd_f2)
+# sink()
+# sd_f2_by_species_T4_4.glm <- list()
+# bySpecies.ls <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = function(x) x)
+# for (i in 1:7) 
+#   {
+#   sd_f2_by_species_T4_4.glm[[i]] <- 
+#   glmulti(sd_f2 ~ latwgs84 + lonwgs84 + AdmixLayer1, data = bySpecies.ls[[i]], 
+#           level = 2, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+#   }
+# names(sd_f2_by_species_T4_4.glm) <- names(bySpecies.ls)
+
+```
+
+
+```{r species-by-species model for mean_medianTheta NOT USED}
+# step_mean_medianTheta <- function(x)
+# {
+#   cat("\n********************************\n",unique(x$species),"\n")
+#   step(glm(formula = mean_medianTheta ~ 1, data = x),
+#                      scope = ~ latwgs84 + lonwgs84 + AdmixLayer1,
+#                      direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_mean_median(theta)_T4_4", append = T)
+# mean_medianTheta_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_mean_medianTheta)
+# sink()
+# mean_medianTheta_by_species_T4_4.glm <- list()
+# bySpecies.ls <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = function(x) x)
+# for (i in 1:7) 
+#   {
+#   mean_medianTheta_by_species_T4_4.glm[[i]] <- 
+#   glmulti(mean_medianTheta ~ latwgs84 + lonwgs84 + AdmixLayer1, data = bySpecies.ls[[i]], 
+#           level = 2, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+#   }
+# names(mean_medianTheta_by_species_T4_4.glm) <- names(bySpecies.ls)
+
+```
+
+
+```{r species-by-species model for median_medianTheta NOT USED}
+# step_median_medianTheta <- function(x)
+# {
+#   cat("\n********************************\n",unique(x$species),"\n")
+#   step(glm(formula = median_medianTheta ~ 1, data = x),
+#                      scope = ~ latwgs84 + lonwgs84 + AdmixLayer1,
+#                      direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_median_median(theta)_T4_4", append = T)
+# median_medianTheta_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_median_medianTheta)
+# sink()
+# median_medianTheta_by_species_T4_4.glm <- list()
+# for (i in 1:7) 
+#   {
+#   varList <- names(allDivEnvStar.df)[c(3:(4+nbLayers[i]))]
+#   piAll_by_species_T4_4.glm[[i]] <- 
+#   glmulti(y = "pi0div4", xr = varList,
+#           data = bySpecies.ls[[i]], 
+#           level = 2, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+#   }
+# names(median_medianTheta_by_species_T4_4.glm) <- names(bySpecies.ls)
+
+```
+
+
+```{r chunk025: species-by-species model for sd_medianTheta}
+##NOT USED:
+# step_sd_medianTheta <- function(x)
+# {
+#   cat("\n********************************\n",unique(x$species),"\n")
+#   step(glm(formula = sd_medianTheta ~ 1, data = x),
+#                      scope = ~ latwgs84 + lonwgs84 + AdmixLayer1,
+#                      direction = "forward", k = log(nrow(x)))
+# }
+# sink(file = "glm_sd_median(theta)_T4_4", append = T)
+# sd_medianTheta_by_species_T4_4.glm <- by(allDivEnv.df[-146,], INDICES = factor(allDivEnv.df[-146,]$species), FUN = step_sd_medianTheta)
+# sink()
+sd_medianTheta_by_species_T4_4.glm <- list()
+for (i in 1:7) 
+  {
+  varList <- names(allDivEnvStar.df)[c(3:(4+nbLayers[i]-1))]
+  formula <- paste("sd_medianTheta~",
+                    paste(varList,collapse="+")#,
+                    # "+",
+                    # paste(paste(varList[1],varList[3:length(varList)],sep=":"),collapse="+"),
+                    # "+",
+                    # paste(paste(varList[2],varList[3:length(varList)],sep=":"),collapse="+")
+                    )
+  sd_medianTheta_by_species_T4_4.glm[[i]] <- 
+  glmulti(y = formula,
+          data = bySpecies.ls[[i]], 
+          level = 1, method = "h",fitfunction = lm, crit = 'bic', plotty = F)
+  }
+names(sd_medianTheta_by_species_T4_4.glm) <- names(bySpecies.ls)
+```
+
+
+
+## c. Estimation of "effects"
+
+### Estimation of slopes. Notice that they are directly comparable due to scaling and centering
+
+```{r chunk 026: mining glm() output objects}
+# #where to get coefficient estimates:
+# summary(lm(summary(piAll_by_species_T4_4.glm[[1]])$bestmodel,
+#            data=bySpecies.ls[[1]]))$coefficients[,1]
+# summary(lm(summary(get(glm_T4_4[i])[[j]])$bestmodel,
+#            data=bySpecies.ls[[1]]))$coefficients[,1]
+# collecting object names
+glm_T4_4 <- ls(pattern = "_T4_4.glm")
+glm_coefficients <- matrix(nrow = 3*7, ncol = 14)
+k <- 0
+for (i in 1:3)
+{
+  for (j in 1:7)
+  {
+    k <- k+1
+## NOT USED:
+#    tmp <- get(glm_T4_4[i])[[j]]$coefficients
+    tmp <- summary(lm(summary(get(glm_T4_4[i])[[j]])$bestmodel,
+           data=bySpecies.ls[[j]]))$coefficients[,1]
+    glm_coefficients[k,1] <- glm_T4_4[i]
+    glm_coefficients[k,2] <- names(get(glm_T4_4[i]))[j]
+    glm_coefficients[k,3] <- round(tmp[1], 3)
+    if(is.element("AdmixLayer01", names(tmp))) glm_coefficients[k,4] <- round(tmp["AdmixLayer01"], 3)
+    if(is.element("AdmixLayer02", names(tmp))) glm_coefficients[k,5] <- round(tmp["AdmixLayer02"], 3)
+    if(is.element("AdmixLayer03", names(tmp))) glm_coefficients[k,6] <- round(tmp["AdmixLayer03"], 3)
+    if(is.element("AdmixLayer04", names(tmp))) glm_coefficients[k,7] <- round(tmp["AdmixLayer04"], 3)
+    if(is.element("AdmixLayer05", names(tmp))) glm_coefficients[k,8] <- round(tmp["AdmixLayer05"], 3)
+    if(is.element("AdmixLayer06", names(tmp))) glm_coefficients[k,9] <- round(tmp["AdmixLayer06"], 3)
+    if(is.element("AdmixLayer07", names(tmp))) glm_coefficients[k,10] <- round(tmp["AdmixLayer07"], 3)
+    if(is.element("AdmixLayer08", names(tmp))) glm_coefficients[k,11] <- round(tmp["AdmixLayer08"], 3)
+    if(is.element("AdmixLayer09", names(tmp))) glm_coefficients[k,12] <- round(tmp["AdmixLayer09"], 3)
+    if(is.element("lonwgs84", names(tmp))) glm_coefficients[k,13] <- round(tmp["lonwgs84"], 3)
+    if(is.element("latwgs84", names(tmp))) glm_coefficients[k,14] <- round(tmp["latwgs84"], 3)
+  }
+}
+glm_coefficients.df <- data.frame(glm_coefficients)
+names(glm_coefficients.df) <- c("genDivVar","species","intercept",
+                                "AdmixCoef01","AdmixCoef02","AdmixCoef03",
+                                "AdmixCoef04","AdmixCoef05","AdmixCoef06",
+                                "AdmixCoef07","AdmixCoef08","AdmixCoef09",
+                                "Lon","Lat")
+#making variable names human-friendly
+glm_coefficients.df[glm_coefficients.df == "pi0div4_by_species_T4_4.glm"] <- "pi0/pi4"
+glm_coefficients.df[glm_coefficients.df == "piAll_by_species_T4_4.glm"] <- "piAll"
+glm_coefficients.df[glm_coefficients.df == "sd_medianTheta_by_species_T4_4.glm"] <- "stairway_stdev(theta)"
+write.table(x = glm_coefficients.df, file = "glm_coefficients.txt", row.names = F, col.names = T, quote = F, sep = "\t")
+rm(glm_coefficients); rm(glm_T4_4)
+```
+
+# 3. Plotting
+
+## a. Generating full plots with species and divStat values:
+
+```{r chunk 027: plotting div stats vs coordinates}
+# building an indicator of whether the coefficient is significant in the full model:
+# starting from glm_coefficients.df: keeping relevant cols
+labels.df <- glm_coefficients.df[, c(1:2,13:14)]
+# (re)creating correspondence between row names and column names in allDivEnv.df
+labels.df[labels.df == "stairway_stdev(theta)"] <- names(allDivEnv.df)[58]
+labels.df[labels.df == "piAll"] <- names(allDivEnvStar.df)[17]
+labels.df[labels.df == "pi0/pi4"] <- names(allDivEnvStar.df)[19]
+labels.df <- cbind(labels.df, glm_coefficients.df[, 1])
+names(labels.df)[5] <- "genDivVarClean"
+#
+pdf(file = "divStatVsGeoBySpeciesLAT.pdf", width = 20, height = 10)
+par(mfrow = c(3,7))
+for (i in c(17,19,58))
+{
+  for (k in levels(as.factor(allDivEnvStar.df$species)))
+  {
+  tmp <- subset(allDivEnvStar.df, species == k)
+  # checking condition on significance, adding stars
+  tmp.labels <- subset(labels.df, species == k & genDivVar == names(tmp)[i])
+  if (is.na(tmp.labels[1,4]) == F) Ylab <- paste(tmp.labels[1,5], "(*)", sep = " ") else Ylab <- tmp.labels[1,5]
+  plot(tmp[,i] ~ tmp$latwgs84, pch = 21, bg = "grey", xaxt = "n", yaxt = "n", ylab = Ylab, xlab = "latitude", main = k,
+       xlim = c(min(allDivEnvStar.df$latwgs84), max(allDivEnvStar.df$latwgs84)),
+       ylim = c(min(allDivEnvStar.df[,i], na.rm = T), max(allDivEnvStar.df[,i], na.rm = T)))
+  }
+}
+dev.off()
+#
+pdf(file = "divStatVsGeoBySpeciesLON.pdf", width = 20, height = 10)
+par(mfrow = c(3,7))
+for (i in c(17,19,58))
+{
+  for (k in levels(as.factor(allDivEnvStar.df$species)))
+  {
+  tmp <- subset(allDivEnvStar.df, species == k)
+  # checking condition on significance, adding stars
+  tmp.labels <- subset(labels.df, species == k & genDivVar == names(tmp)[i])
+  if (is.na(tmp.labels[1,3]) == F) Ylab <- paste(tmp.labels[1,5], "(*)", sep = " ") else Ylab <- tmp.labels[1,5]
+  plot(tmp[,i] ~ tmp$lonwgs84, pch = 21, bg = "grey", xaxt = "n", yaxt = "n", ylab = Ylab, xlab = "longitude", main = k,
+       xlim = c(min(allDivEnvStar.df$lonwgs84), max(allDivEnvStar.df$lonwgs84)),
+       ylim = c(min(allDivEnvStar.df[,i], na.rm = T), max(allDivEnvStar.df[,i], na.rm = T)))
+  }
+}
+dev.off()
+
+
+# notice that, of course, here one cannot obtain the same slopes as in the full model used above
+```
+
+## b. Species-group comparisons
+
+### Effect of species group on RAW values
+
+(using normalised values would suppress the effect)
+
+```{r chunk 028: creating species group factors}
+# 1. defining functions
+geoGroups <- function(x) if (is.element(x, c("PA","BP","PS"))==T) "boreal" else "temperate"
+phyloGroups <- function(x) if (is.element(x, c("PA","PP","PS"))==T) "gymno" else "angio"
+# reassembling relevant unscaled data
+allDivGeo.raw.df <- merge(x = envDataMeans.df[1:3],piStats.df[-2], by = 0, all.y = T)
+row.names(allDivGeo.raw.df)<- allDivGeo.raw.df$Row.names
+allDivGeo.raw.df <- allDivGeo.raw.df[-1]
+allDivGeo.raw.df <- merge(allDivGeo.raw.df, all.sumstats.df[-1], by = 0, all.y = T)
+row.names(allDivGeo.raw.df)<- allDivGeo.raw.df$Row.names
+allDivGeo.raw.df <- allDivGeo.raw.df[-1]
+names(allDivGeo.raw.df)[1] <- "species"
+# creating a "Star" (i.e. without "OB") object for allDivGeo.raw.df:
+allDivGeo.rawStar.df <- allDivGeo.raw.df[-146,]
+# applying functions
+allDivGeo.raw.geoGroups <- sapply(X = allDivGeo.rawStar.df$species, FUN = geoGroups)
+allDivGeo.raw.phyloGroups <- sapply(X = allDivGeo.rawStar.df$species, FUN = phyloGroups)
+allDivGeo.rawStar.df <- cbind(allDivGeo.raw.geoGroups, allDivGeo.raw.phyloGroups, allDivGeo.rawStar.df)
+
+names(allDivGeo.rawStar.df)[1:2] <- c("geoGroups","phyloGroups")
+allDivGeo.rawStar.df$geoGroups <- factor(allDivGeo.rawStar.df$geoGroups)
+allDivGeo.rawStar.df$phyloGroups <- factor(allDivGeo.rawStar.df$phyloGroups)
+allDivGeo.rawStar.df$species <- factor(allDivGeo.rawStar.df$species)
+```
+
+Running models (ANOVA):
+
+```{r chunk 029: species group ANOVA}
+# testing
+options(contrasts=c('contr.sum','contr.sum'))
+contrasts(allDivGeo.rawStar.df$geoGroups) <- c(-0.5,0.5)
+contrasts(allDivGeo.rawStar.df$species) 
+summary(aov(all_pi ~ geoGroups/species, data = allDivGeo.rawStar.df))
+effects(aov(all_pi ~ geoGroups/species, data = allDivGeo.rawStar.df))
+summary(aov(all_pi ~ phyloGroups/species, data = allDivGeo.rawStar.df, contrasts = "contr.sum"))
+plot(aov(all_pi ~ geoGroups/species, data = allDivGeo.rawStar.df))
+TukeyHSD(aov(all_pi ~ geoGroups/species, data = allDivGeo.rawStar.df)) 
+TukeyHSD(aov(all_pi ~ phyloGroups/species, data = allDivGeo.rawStar.df))
+proportion <- table(allDivGeo.rawStar.df$species) / nrow(allDivGeo.rawStar.df)
+boxplot(allDivGeo.rawStar.df$all_pi ~ allDivGeo.rawStar.df$species, col = c("blue", "green", "blue", "green", "green", "blue","green"),
+        width=proportion, ylab = "all_pi", xlab = "species")
+summary(glm(all_pi ~ latwgs84 * species, data = allDivGeo.rawStar.df))
+all_pi.glm <- glm(all_pi ~ latwgs84 * species, data = allDivGeo.rawStar.df)
+# p <- ggplot(allDivGeo.rawStar.df, aes(x=latwgs84, y=pi_all, colour=species)) +
+#   geom_point(size=3) +
+#   #geom_line(aes(y=predict(pi_all.glm), group=Subject, size="Subjects")) +
+#   geom_line(data=newdat, aes(y=predict(fm2, level=0, newdata=newdat), size="Population")) +
+#   scale_size_manual(name="Predictions", values=c("Subjects"=0.5, "Population"=3)) +
+#   theme_bw(base_size=22)
+#defining generic function
+divGLM <- function (x, y) #a function to collect all the lm on raw observations
+  # x = numeric. Vector of dependent variable
+  # y = array. Contains the explanatory variables
+{
+  tmp <- list()
+  tmp[[1]] <- list(                                                                           # first element of the list is for LATITUDES
+             glm(x ~ y$latwgs84 * y$species),
+             lm(x[which(y$species == tail(levels(y$species),1))] ~                            # this returns the last species' lm,
+                  latwgs84, data = subset(y, species == tail(levels(y$species),1))),          # independently of the general model above
+             lm(x[which(y$geoGroups == "boreal")] ~ 
+                  subset(y, geoGroups == "boreal")$latwgs84),
+             lm(x[which(y$geoGroups == "temperate")] ~ 
+                  subset(y, geoGroups == "temperate")$latwgs84),
+             lm(x[which(y$phyloGroups == "gymno")] ~ 
+                  subset(y, phyloGroups == "gymno")$latwgs84),
+             lm(x[which(y$phyloGroups == "angio")] ~ 
+                  subset(y, phyloGroups == "angio")$latwgs84))
+ names(tmp[[1]]) <- c("Sp_glm", "lastSp_lm", "geo_glm", "lastGeoGroup_glm", "phylo_glm", "lastPhyloGroup_glm")
+ tmp[[2]] <- list(                                                                           # second element of the list is for LONGITUDES
+             glm(x ~ y$lonwgs84 * y$species),
+             lm(x[which(y$species == tail(levels(y$species),1))] ~                           # this returns the last species' lm, 
+                  lonwgs84, data = subset(y, species == tail(levels(y$species),1))),         # independently of the general model above
+             lm(x[which(y$geoGroups == "boreal")] ~ 
+                  subset(y, geoGroups == "boreal")$lonwgs84),
+             lm(x[which(y$geoGroups == "temperate")] ~ 
+                  subset(y, geoGroups == "temperate")$lonwgs84),
+             lm(x[which(y$phyloGroups == "gymno")] ~ 
+                  subset(y, phyloGroups == "gymno")$lonwgs84),
+             lm(x[which(y$phyloGroups == "angio")] ~ 
+                  subset(y, phyloGroups == "angio")$lonwgs84))
+ names(tmp[[2]]) <- c("Sp_glm", "lastSp_lm", "geo_glm", "lastGeoGroup_glm", "phylo_glm", "lastPhyloGroup_glm")
+ names(tmp) <- c("lat", "lon")
+ return(tmp)
+}
+GLMs_forPlotting <- apply(X = allDivGeo.rawStar.df[c(12,10,51)], MARGIN = 2, FUN = divGLM, y = allDivGeo.rawStar.df)
+names(GLMs_forPlotting) <- names(allDivGeo.rawStar.df)[c(12,10,51)]
+```
+
+
+All the required coefficients have now been generated for plotting.
+
+Notice that we will plot the raw values, not model residuals, along with the fitting straight lines corresponding to each species' and each group's models.
+
+This way the fitting straight lines will correspond to each group's scatter plot, but *the plot slopes do not correspond to a given group's effect* - they are the sum of general slope and group slope. Same for intercepts.
+
+
+## Plotting of raw dependencies of genDiv variables on Lat, Lon by species and species group
+
+Approx line numbers for the start of chunks for each plot:
+  * **Pi_all**: L 1213
+    + *Latitude*: L 1218
+    + *Longitude*: L 1366
+  * **Pi0/Pi4**: L 1496
+    + *Latitude*: L 1503
+    + *Longitude*: L 1640
+  * **sd_medianTheta**: L 1777
+    + *Latitude*: L 1783
+    + *Longitude*: L 1919
+
+
+********************************
+### Pi_all
+********************************
+
+```{r chunk 030: plotting GLM piAll vs lat}
+# reminder : 'pi_all' is second element of the GLMs_forPlotting list
+#            'lat' is the first element of that element  
+pdf(file = "all_pi_latBYspecies.pdf")
+plot(x = subset(allDivGeo.rawStar.df, species == "BP")$latwgs84,
+     y = subset(allDivGeo.rawStar.df, species == "BP")$all_pi, 
+     xlim = c(min(allDivGeo.rawStar.df$latwgs84), max(allDivGeo.rawStar.df$latwgs84)),
+     ylim = c(min(allDivGeo.rawStar.df$all_pi), max(allDivGeo.rawStar.df$all_pi)),
+     col = "blue",
+     xlab = "Latitude", ylab = "all_pi", main = "all_pi vs Lat")
+# model for first species
+curve((GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$latwgs84:y$species1"])*x+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$species1"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "BP")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "BP")$latwgs84), 
+      lty = "dashed", col = "blue", add = T)
+# dots and modesl for all other species
+points(x = subset(allDivGeo.rawStar.df, species == "FS")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "FS")$all_pi, 
+       col = "green")
+curve((GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$latwgs84:y$species2"])*x+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$species2"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "FS")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "FS")$latwgs84), 
+      lty = "dashed", col = "green", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PA")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PA")$all_pi, 
+       col = "darkgreen", pch = 0)
+curve((GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$latwgs84:y$species3"])*x+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$species3"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PA")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PA")$latwgs84), 
+      lty = "dashed", col = "darkgreen", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PO")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PO")$all_pi, 
+       col = "orange", pch = 0)
+curve((GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$latwgs84:y$species4"])*x+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$species4"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PO")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PO")$latwgs84), 
+      lty = "dashed", col = "orange", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PP")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PP")$all_pi, 
+       col = "purple", pch = 2)
+curve((GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$latwgs84:y$species5"])*x+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$species5"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PP")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PP")$latwgs84), 
+      lty = "dashed", col = "purple", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PS")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PS")$all_pi, 
+       col = "red", pch = 2)
+curve((GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$latwgs84:y$species6"])*x+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$species6"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PS")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PS")$latwgs84), 
+      lty = "dashed", col = "red", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "QP")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "QP")$all_pi, 
+       col = "brown", pch = 2)
+curve((GLMs_forPlotting[[2]][[1]][[2]]$coefficients["latwgs84"])*x+
+       GLMs_forPlotting[[2]][[1]][[2]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "QP")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "QP")$latwgs84), 
+      lty = "dashed", col = "brown", add = T)
+## NOT USED
+# overall mean
+# curve((GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$latwgs84"])*x+
+#        GLMs_forPlotting[[2]][[1]][[1]]$coefficients["(Intercept)"], 
+#       from = min(allDivGeo.rawStar.df$latwgs84), 
+#       to = max(allDivGeo.rawStar.df$latwgs84), 
+#       lwd = 2, col = "lightgrey", add = T)
+text(labels = levels(allDivGeo.rawStar.df$species),
+     x = c(65,61,65,35,33,65,60),
+     y = c(0.0022,0.0027,0.0033,0.0021,0.00155,0.0017,0.0030),
+     col = c("blue", "green", "darkgreen", "orange", "purple", "red", "brown"))
+dev.off()
+# END OF PLOT for species
+#
+# phylo / geo group models
+pdf(file = "all_pi_latBYgroup.pdf")
+plot(x = subset(allDivGeo.rawStar.df, phyloGroups == "gymno" & geoGroups == "boreal")$latwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "gymno" & geoGroups == "boreal")$all_pi, 
+     xlim = c(min(allDivGeo.rawStar.df$latwgs84), max(allDivGeo.rawStar.df$latwgs84)),
+     ylim = c(min(allDivGeo.rawStar.df$all_pi), max(allDivGeo.rawStar.df$all_pi)),
+     pch = 24, bg = "slategrey",
+     xlab = "Latitude", ylab = "all_pi", main = "all_pi vs Lat")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "gymno" & geoGroups == "temperate")$latwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "gymno" & geoGroups == "temperate")$all_pi, 
+     pch = 24, bg = "white")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "angio" & geoGroups == "boreal")$latwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "angio" & geoGroups == "boreal")$all_pi, 
+     pch = 21, bg = "slategrey")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "angio" & geoGroups == "temperate")$latwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "angio" & geoGroups == "temperate")$all_pi, 
+     pch = 21, bg = "white")
+#
+curve((GLMs_forPlotting[[2]][[1]][[5]]$coefficients[2])*x+
+       GLMs_forPlotting[[2]][[1]][[5]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, phyloGroups == "gymno")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, phyloGroups == "gymno")$latwgs84), 
+      col = "black", lty = "dotted", lwd = 2, add = T)
+curve((GLMs_forPlotting[[2]][[1]][[6]]$coefficients[2])*x+
+       GLMs_forPlotting[[2]][[1]][[6]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, phyloGroups == "angio")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, phyloGroups == "angio")$latwgs84), 
+      col = "black", lty = "dashed", add = T)
+curve((GLMs_forPlotting[[2]][[1]][[3]]$coefficients[2])*x+
+       GLMs_forPlotting[[2]][[1]][[3]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, geoGroups == "boreal")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, geoGroups == "boreal")$latwgs84), 
+      col = "black", add = T)
+curve((GLMs_forPlotting[[2]][[1]][[4]]$coefficients[2])*x+
+       GLMs_forPlotting[[2]][[1]][[4]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, geoGroups == "temperate")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, geoGroups == "temperate")$latwgs84), 
+      col = "gray", lwd = 2, add = T)
+text(labels = c(levels(allDivGeo.rawStar.df$phyloGroups)[2:1],levels(allDivGeo.rawStar.df$geoGroups)),
+     x = c(65,35,65,35),
+     y = c(0.0031,0.0026,0.00265,0.0019))
+dev.off()
+```
+
+
+```{r chunk 031: plotting GLM piAll vs lon}
+# reminder : 'pi_all' is second element of the GLMs_forPlotting list
+#            'lon' is the second element of that element  
+pdf(file = "all_pi_lonBYspecies.pdf")
+plot(x = subset(allDivGeo.rawStar.df, species == "BP")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df, species == "BP")$all_pi, 
+     xlim = c(min(allDivGeo.rawStar.df$lonwgs84), max(allDivGeo.rawStar.df$lonwgs84)),
+     ylim = c(min(allDivGeo.rawStar.df$all_pi), max(allDivGeo.rawStar.df$all_pi)),
+     col = "blue",
+     xlab = "longitude", ylab = "all_pi", main = "all_pi vs lon")
+# model for first species
+curve((GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$lonwgs84:y$species1"])*x+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$species1"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "BP")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "BP")$lonwgs84), 
+      lty = "dashed", col = "blue", add = T)
+# dots and modesl for all other species
+points(x = subset(allDivGeo.rawStar.df, species == "FS")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "FS")$all_pi, 
+       col = "green")
+curve((GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$lonwgs84:y$species2"])*x+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$species2"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "FS")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "FS")$lonwgs84), 
+      lty = "dashed", col = "green", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PA")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PA")$all_pi, 
+       col = "darkgreen", pch = 0)
+curve((GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$lonwgs84:y$species3"])*x+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$species3"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PA")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PA")$lonwgs84), 
+      lty = "dashed", col = "darkgreen", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PO")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PO")$all_pi, 
+       col = "orange", pch = 0)
+curve((GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$lonwgs84:y$species4"])*x+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$species4"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PO")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PO")$lonwgs84), 
+      lty = "dashed", col = "orange", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PP")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PP")$all_pi, 
+       col = "purple", pch = 2)
+curve((GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$lonwgs84:y$species5"])*x+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$species5"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PP")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PP")$lonwgs84), 
+      lty = "dashed", col = "purple", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PS")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PS")$all_pi, 
+       col = "red", pch = 2)
+curve((GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$lonwgs84:y$species6"])*x+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[2]][[2]][[1]]$coefficients["y$species6"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PS")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PS")$lonwgs84), 
+      lty = "dashed", col = "red", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "QP")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "QP")$all_pi, 
+       col = "brown", pch = 2)
+curve((GLMs_forPlotting[[2]][[2]][[2]]$coefficients["lonwgs84"])*x+
+       GLMs_forPlotting[[2]][[2]][[2]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "QP")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "QP")$lonwgs84), 
+      lty = "dashed", col = "brown", add = T)
+## NOT USED
+# overall mean
+# curve((GLMs_forPlotting[[2]][[1]][[1]]$coefficients["y$lonwgs84"])*x+
+#        GLMs_forPlotting[[2]][[2]][[1]]$coefficients["(Intercept)"], 
+#       from = min(allDivGeo.rawStar.df$lonwgs84), 
+#       to = max(allDivGeo.rawStar.df$lonwgs84), 
+#       lwd = 2, col = "lightgrey", add = T)
+text(labels = levels(allDivGeo.rawStar.df$species),
+     x = c(82,-5,65,19,18,65,30),
+     y = c(0.0021,0.0027,0.0035,0.0017,0.0013,0.0017,0.0029),
+     col = c("blue", "green", "darkgreen", "orange", "purple", "red", "brown"))
+dev.off()
+# END OF PLOT for species
+#
+# phylo / geo group models
+pdf(file = "all_pi_lonBYgroup.pdf")
+plot(x = subset(allDivGeo.rawStar.df, phyloGroups == "gymno" & geoGroups == "boreal")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "gymno" & geoGroups == "boreal")$all_pi, 
+     xlim = c(min(allDivGeo.rawStar.df$lonwgs84), max(allDivGeo.rawStar.df$lonwgs84)),
+     ylim = c(min(allDivGeo.rawStar.df$all_pi), max(allDivGeo.rawStar.df$all_pi)),
+     pch = 24, bg = "slategrey",
+     xlab = "Longitude", ylab = "all_pi", main = "all_pi vs lon")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "gymno" & geoGroups == "temperate")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "gymno" & geoGroups == "temperate")$all_pi, 
+     pch = 24, bg = "white")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "angio" & geoGroups == "boreal")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "angio" & geoGroups == "boreal")$all_pi, 
+     pch = 21, bg = "slategrey")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "angio" & geoGroups == "temperate")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "angio" & geoGroups == "temperate")$all_pi, 
+     pch = 21, bg = "white")
+#
+curve((GLMs_forPlotting[[2]][[2]][[5]]$coefficients[2])*x+
+       GLMs_forPlotting[[2]][[2]][[5]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, phyloGroups == "gymno")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, phyloGroups == "gymno")$lonwgs84), 
+      col = "black", lty = "dotted", lwd = 2, add = T)
+curve((GLMs_forPlotting[[2]][[2]][[6]]$coefficients[2])*x+
+       GLMs_forPlotting[[2]][[2]][[6]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, phyloGroups == "angio")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, phyloGroups == "angio")$lonwgs84), 
+      col = "black", lty = "dashed", add = T)
+curve((GLMs_forPlotting[[2]][[2]][[3]]$coefficients[2])*x+
+       GLMs_forPlotting[[2]][[2]][[3]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, geoGroups == "boreal")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, geoGroups == "boreal")$lonwgs84), 
+      col = "black", add = T)
+curve((GLMs_forPlotting[[2]][[2]][[4]]$coefficients[2])*x+
+       GLMs_forPlotting[[2]][[2]][[4]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, geoGroups == "temperate")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, geoGroups == "temperate")$lonwgs84), 
+      col = "gray", lwd = 2, add = T)
+text(labels = c(levels(allDivGeo.rawStar.df$phyloGroups)[2:1],levels(allDivGeo.rawStar.df$geoGroups)),
+     x = c(60,70,80,20),
+     y = c(0.0031,0.0022,0.0031,0.0027))
+dev.off()
+```
+
+
+
+
+
+
+
+********************************
+### Pi0/Pi4
+********************************
+Latitude:
+
+```{r chunk 032: plotting GLM pi0/pi4 vs lat}
+# reminder : 'pi0div4' is first element of the 'GLMs_forPlotting' list
+#            'lat' is the first element of that element  
+pdf(file = "pi0div4_latBYspecies.pdf")
+plot(x = subset(allDivGeo.rawStar.df, species == "BP")$latwgs84,
+     y = subset(allDivGeo.rawStar.df, species == "BP")$pi0div4, 
+     xlim = c(min(allDivGeo.rawStar.df$latwgs84), max(allDivGeo.rawStar.df$latwgs84)),
+     ylim = c(min(allDivGeo.rawStar.df$pi0div4), max(allDivGeo.rawStar.df$pi0div4)),
+     col = "blue",
+     xlab = "Latitude", ylab = "pi0div4", main = "pi0div4 vs Lat")
+# model for first species
+curve((GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$latwgs84:y$species1"])*x+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$species1"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "BP")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "BP")$latwgs84), 
+      lty = "dashed", col = "blue", add = T)
+# dots and modesl for all other species
+points(x = subset(allDivGeo.rawStar.df, species == "FS")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "FS")$pi0div4, 
+       col = "green")
+curve((GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$latwgs84:y$species2"])*x+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$species2"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "FS")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "FS")$latwgs84), 
+      lty = "dashed", col = "green", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PA")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PA")$pi0div4, 
+       col = "darkgreen", pch = 0)
+curve((GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$latwgs84:y$species3"])*x+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$species3"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PA")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PA")$latwgs84), 
+      lty = "dashed", col = "darkgreen", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PO")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PO")$pi0div4, 
+       col = "orange", pch = 0)
+curve((GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$latwgs84:y$species4"])*x+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$species4"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PO")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PO")$latwgs84), 
+      lty = "dashed", col = "orange", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PP")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PP")$pi0div4, 
+       col = "purple", pch = 2)
+curve((GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$latwgs84:y$species5"])*x+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$species5"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PP")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PP")$latwgs84), 
+      lty = "dashed", col = "purple", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PS")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PS")$pi0div4, 
+       col = "red", pch = 2)
+curve((GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$latwgs84:y$species6"])*x+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$species6"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PS")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PS")$latwgs84), 
+      lty = "dashed", col = "red", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "QP")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "QP")$pi0div4, 
+       col = "brown", pch = 2)
+curve((GLMs_forPlotting[[1]][[1]][[2]]$coefficients["latwgs84"])*x+
+       GLMs_forPlotting[[1]][[1]][[2]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "QP")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "QP")$latwgs84), 
+      lty = "dashed", col = "brown", add = T)
+## NOT USED
+# overall mean
+# curve((GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$latwgs84"])*x+
+#        GLMs_forPlotting[[1]][[1]][[1]]$coefficients["(Intercept)"], 
+#       from = min(allDivGeo.rawStar.df$latwgs84), 
+#       to = max(allDivGeo.rawStar.df$latwgs84), 
+#       lwd = 2, col = "lightgrey", add = T)
+text(labels = levels(allDivGeo.rawStar.df$species),
+     x = c(65,61,39,35,35,38,61),
+     y = c(0.22,0.24,0.37,0.27,0.31,0.47,0.26),
+     col = c("blue", "green", "darkgreen", "orange", "purple", "red", "brown"))
+dev.off()
+# END OF PLOT for species
+#
+# phylo / geo group models
+pdf(file = "pi0div4_latBYgroup.pdf")
+plot(x = subset(allDivGeo.rawStar.df, phyloGroups == "gymno" & geoGroups == "boreal")$latwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "gymno" & geoGroups == "boreal")$pi0div4, 
+     xlim = c(min(allDivGeo.rawStar.df$latwgs84), max(allDivGeo.rawStar.df$latwgs84)),
+     ylim = c(min(allDivGeo.rawStar.df$pi0div4), max(allDivGeo.rawStar.df$pi0div4)),
+     pch = 24, bg = "slategrey",
+     xlab = "Latitude", ylab = "pi0div4", main = "pi0div4 vs Lat")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "gymno" & geoGroups == "temperate")$latwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "gymno" & geoGroups == "temperate")$pi0div4, 
+     pch = 24, bg = "white")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "angio" & geoGroups == "boreal")$latwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "angio" & geoGroups == "boreal")$pi0div4, 
+     pch = 21, bg = "slategrey")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "angio" & geoGroups == "temperate")$latwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "angio" & geoGroups == "temperate")$pi0div4, 
+     pch = 21, bg = "white")
+#
+curve((GLMs_forPlotting[[1]][[1]][[5]]$coefficients[2])*x+
+       GLMs_forPlotting[[1]][[1]][[5]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, phyloGroups == "gymno")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, phyloGroups == "gymno")$latwgs84), 
+      col = "black", lty = "dotted", lwd = 2, add = T)
+curve((GLMs_forPlotting[[1]][[1]][[6]]$coefficients[2])*x+
+       GLMs_forPlotting[[1]][[1]][[6]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, phyloGroups == "angio")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, phyloGroups == "angio")$latwgs84), 
+      col = "black", lty = "dashed", add = T)
+curve((GLMs_forPlotting[[1]][[1]][[3]]$coefficients[2])*x+
+       GLMs_forPlotting[[1]][[1]][[3]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, geoGroups == "boreal")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, geoGroups == "boreal")$latwgs84), 
+      col = "black", add = T)
+curve((GLMs_forPlotting[[1]][[1]][[4]]$coefficients[2])*x+
+       GLMs_forPlotting[[1]][[1]][[4]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, geoGroups == "temperate")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, geoGroups == "temperate")$latwgs84), 
+      col = "gray", lwd = 2, add = T)
+text(labels = c(levels(allDivGeo.rawStar.df$phyloGroups)[2:1],levels(allDivGeo.rawStar.df$geoGroups)),
+     x = c(62,65,65,62),
+     y = c(0.40,0.23,0.32,0.27))
+dev.off()
+```
+
+Longitude:
+
+```{r chunk 033: plotting GLM pi0div4 vs lon}
+# reminder : 'pi0div4' is the first element of the GLMs_forPlotting list
+#            'lon' is the second element of that element  
+pdf(file = "pi0div4_lonBYspecies.pdf")
+plot(x = subset(allDivGeo.rawStar.df, species == "BP")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df, species == "BP")$pi0div4, 
+     xlim = c(min(allDivGeo.rawStar.df$lonwgs84), max(allDivGeo.rawStar.df$lonwgs84)),
+     ylim = c(min(allDivGeo.rawStar.df$pi0div4), max(allDivGeo.rawStar.df$pi0div4)),
+     col = "blue",
+     xlab = "longitude", ylab = "pi0div4", main = "pi0div4 vs lon")
+# model for first species
+curve((GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$lonwgs84:y$species1"])*x+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$species1"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "BP")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "BP")$lonwgs84), 
+      lty = "dashed", col = "blue", add = T)
+# dots and modesl for all other species
+points(x = subset(allDivGeo.rawStar.df, species == "FS")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "FS")$pi0div4, 
+       col = "green")
+curve((GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$lonwgs84:y$species2"])*x+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$species2"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "FS")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "FS")$lonwgs84), 
+      lty = "dashed", col = "green", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PA")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PA")$pi0div4, 
+       col = "darkgreen", pch = 0)
+curve((GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$lonwgs84:y$species3"])*x+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$species3"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PA")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PA")$lonwgs84), 
+      lty = "dashed", col = "darkgreen", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PO")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PO")$pi0div4, 
+       col = "orange", pch = 0)
+curve((GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$lonwgs84:y$species4"])*x+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$species4"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PO")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PO")$lonwgs84), 
+      lty = "dashed", col = "orange", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PP")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PP")$pi0div4, 
+       col = "purple", pch = 2)
+curve((GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$lonwgs84:y$species5"])*x+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$species5"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PP")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PP")$lonwgs84), 
+      lty = "dashed", col = "purple", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PS")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PS")$pi0div4, 
+       col = "red", pch = 2)
+curve((GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$lonwgs84:y$species6"])*x+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[1]][[2]][[1]]$coefficients["y$species6"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PS")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PS")$lonwgs84), 
+      lty = "dashed", col = "red", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "QP")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "QP")$pi0div4, 
+       col = "brown", pch = 2)
+curve((GLMs_forPlotting[[1]][[2]][[2]]$coefficients["lonwgs84"])*x+
+       GLMs_forPlotting[[1]][[2]][[2]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "QP")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "QP")$lonwgs84), 
+      lty = "dashed", col = "brown", add = T)
+## NOT USED
+# overall mean
+# curve((GLMs_forPlotting[[1]][[1]][[1]]$coefficients["y$lonwgs84"])*x+
+#        GLMs_forPlotting[[1]][[2]][[1]]$coefficients["(Intercept)"], 
+#       from = min(allDivGeo.rawStar.df$lonwgs84), 
+#       to = max(allDivGeo.rawStar.df$lonwgs84), 
+#       lwd = 2, col = "lightgrey", add = T)
+text(labels = levels(allDivGeo.rawStar.df$species),
+     x = c(80,-5,65,-10,0,65,30),
+     y = c(0.23,0.24,0.37,0.27,0.32,0.45,0.26),
+     col = c("blue", "green", "darkgreen", "orange", "purple", "red", "brown"))
+dev.off()
+# END OF PLOT for species
+#
+# phylo / geo group models
+pdf(file = "pi0div4_lonBYgroup.pdf")
+plot(x = subset(allDivGeo.rawStar.df, phyloGroups == "gymno" & geoGroups == "boreal")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "gymno" & geoGroups == "boreal")$pi0div4, 
+     xlim = c(min(allDivGeo.rawStar.df$lonwgs84), max(allDivGeo.rawStar.df$lonwgs84)),
+     ylim = c(min(allDivGeo.rawStar.df$pi0div4), max(allDivGeo.rawStar.df$pi0div4)),
+     pch = 24, bg = "slategrey",
+     xlab = "Longitude", ylab = "pi0div4", main = "pi0div4 vs lon")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "gymno" & geoGroups == "temperate")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "gymno" & geoGroups == "temperate")$pi0div4, 
+     pch = 24, bg = "white")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "angio" & geoGroups == "boreal")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "angio" & geoGroups == "boreal")$pi0div4, 
+     pch = 21, bg = "slategrey")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "angio" & geoGroups == "temperate")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "angio" & geoGroups == "temperate")$pi0div4, 
+     pch = 21, bg = "white")
+#
+curve((GLMs_forPlotting[[1]][[2]][[5]]$coefficients[2])*x+
+       GLMs_forPlotting[[1]][[2]][[5]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, phyloGroups == "gymno")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, phyloGroups == "gymno")$lonwgs84), 
+      col = "black", lty = "dotted", lwd = 2, add = T)
+curve((GLMs_forPlotting[[1]][[2]][[6]]$coefficients[2])*x+
+       GLMs_forPlotting[[1]][[2]][[6]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, phyloGroups == "angio")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, phyloGroups == "angio")$lonwgs84), 
+      col = "black", lty = "dashed", add = T)
+curve((GLMs_forPlotting[[1]][[2]][[3]]$coefficients[2])*x+
+       GLMs_forPlotting[[1]][[2]][[3]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, geoGroups == "boreal")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, geoGroups == "boreal")$lonwgs84), 
+      col = "black", add = T)
+curve((GLMs_forPlotting[[1]][[2]][[4]]$coefficients[2])*x+
+       GLMs_forPlotting[[1]][[2]][[4]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, geoGroups == "temperate")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, geoGroups == "temperate")$lonwgs84), 
+      col = "gray", lwd = 2, add = T)
+text(labels = c(levels(allDivGeo.rawStar.df$phyloGroups)[2:1],levels(allDivGeo.rawStar.df$geoGroups)),
+     x = c(60,70,80,25),
+     y = c(0.40,0.22,0.31,0.27))
+dev.off()
+```
+
+********************************
+### sd_medianTheta
+********************************
+
+Latitude:
+
+```{r chunk 34: plotting GLM sd_medianTheta vs lat}
+# reminder : 'sd_medianTheta' is the third element of the 'GLMs_forPlotting' list
+#            'lat' is the first element of that element  
+pdf(file = "sd_medianTheta_latBYspecies.pdf")
+plot(x = subset(allDivGeo.rawStar.df, species == "BP")$latwgs84,
+     y = subset(allDivGeo.rawStar.df, species == "BP")$sd_medianTheta, 
+     xlim = c(min(allDivGeo.rawStar.df$latwgs84), max(allDivGeo.rawStar.df$latwgs84)),
+     ylim = c(min(allDivGeo.rawStar.df$sd_medianTheta), max(allDivGeo.rawStar.df$sd_medianTheta)),
+     col = "blue",
+     xlab = "Latitude", ylab = "sd_medianTheta", main = "sd_medianTheta vs Lat")
+# model for first species
+curve((GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$latwgs84:y$species1"])*x+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$species1"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "BP")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "BP")$latwgs84), 
+      lty = "dashed", col = "blue", add = T)
+# dots and modesl for all other species
+points(x = subset(allDivGeo.rawStar.df, species == "FS")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "FS")$sd_medianTheta, 
+       col = "green", pch  = 24)
+curve((GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$latwgs84:y$species2"])*x+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$species2"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "FS")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "FS")$latwgs84), 
+      lty = "dashed", col = "green", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PA")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PA")$sd_medianTheta, 
+       col = "darkgreen", pch = 0)
+curve((GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$latwgs84:y$species3"])*x+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$species3"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PA")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PA")$latwgs84), 
+      lty = "dashed", col = "darkgreen", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PO")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PO")$sd_medianTheta, 
+       col = "orange", pch = 23)
+curve((GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$latwgs84:y$species4"])*x+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$species4"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PO")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PO")$latwgs84), 
+      lty = "dashed", col = "orange", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PP")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PP")$sd_medianTheta, 
+       col = "purple", pch = 25)
+curve((GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$latwgs84:y$species5"])*x+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$species5"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PP")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PP")$latwgs84), 
+      lty = "dashed", col = "purple", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PS")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PS")$sd_medianTheta, 
+       col = "red", pch = 2)
+curve((GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$latwgs84"]+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$latwgs84:y$species6"])*x+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$species6"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PS")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PS")$latwgs84), 
+      lty = "dashed", col = "red", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "QP")$latwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "QP")$sd_medianTheta, 
+       col = "brown", pch = 2)
+curve((GLMs_forPlotting[[3]][[1]][[2]]$coefficients["latwgs84"])*x+
+       GLMs_forPlotting[[3]][[1]][[2]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "QP")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "QP")$latwgs84), 
+      lty = "dashed", col = "brown", add = T)
+## NOT USED
+# overall mean
+# curve((GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$latwgs84"])*x+
+#        GLMs_forPlotting[[3]][[1]][[1]]$coefficients["(Intercept)"], 
+#       from = min(allDivGeo.rawStar.df$latwgs84), 
+#       to = max(allDivGeo.rawStar.df$latwgs84), 
+#       lwd = 2, col = "lightgrey", add = T)
+text(labels = levels(allDivGeo.rawStar.df$species)[6],
+     x = 50,
+     y = 0.014,
+     col = "red")
+dev.off()
+# END OF PLOT for species
+#
+# phylo / geo group models
+pdf(file = "sd_medianTheta_latBYgroup.pdf")
+plot(x = subset(allDivGeo.rawStar.df, phyloGroups == "gymno" & geoGroups == "boreal")$latwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "gymno" & geoGroups == "boreal")$sd_medianTheta, 
+     xlim = c(min(allDivGeo.rawStar.df$latwgs84), max(allDivGeo.rawStar.df$latwgs84)),
+     ylim = c(min(allDivGeo.rawStar.df$sd_medianTheta), max(allDivGeo.rawStar.df$sd_medianTheta)),
+     pch = 24, bg = "slategrey",
+     xlab = "Latitude", ylab = "sd_medianTheta", main = "sd_medianTheta vs Lat")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "gymno" & geoGroups == "temperate")$latwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "gymno" & geoGroups == "temperate")$sd_medianTheta, 
+     pch = 24, bg = "white")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "angio" & geoGroups == "boreal")$latwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "angio" & geoGroups == "boreal")$sd_medianTheta, 
+     pch = 21, bg = "slategrey")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "angio" & geoGroups == "temperate")$latwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "angio" & geoGroups == "temperate")$sd_medianTheta, 
+     pch = 21, bg = "white")
+#
+curve((GLMs_forPlotting[[3]][[1]][[5]]$coefficients[2])*x+
+       GLMs_forPlotting[[3]][[1]][[5]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, phyloGroups == "gymno")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, phyloGroups == "gymno")$latwgs84), 
+      col = "black", lty = "dotted", lwd = 2, add = T)
+curve((GLMs_forPlotting[[3]][[1]][[6]]$coefficients[2])*x+
+       GLMs_forPlotting[[3]][[1]][[6]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, phyloGroups == "angio")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, phyloGroups == "angio")$latwgs84), 
+      col = "black", lty = "dashed", add = T)
+curve((GLMs_forPlotting[[3]][[1]][[3]]$coefficients[2])*x+
+       GLMs_forPlotting[[3]][[1]][[3]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, geoGroups == "boreal")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, geoGroups == "boreal")$latwgs84), 
+      col = "black", add = T)
+curve((GLMs_forPlotting[[3]][[1]][[4]]$coefficients[2])*x+
+       GLMs_forPlotting[[3]][[1]][[4]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, geoGroups == "temperate")$latwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, geoGroups == "temperate")$latwgs84), 
+      col = "gray", lwd = 2, add = T)
+text(labels = c(levels(allDivGeo.rawStar.df$phyloGroups)[2:1],levels(allDivGeo.rawStar.df$geoGroups)),
+     x = c(33,37,40,33),
+     y = c(0.005,0.0,0.01,0.0025))
+dev.off()
+```
+
+Longitude:
+
+```{r chunk 35: plotting GLM sd_medianTheta vs lon}
+# reminder : 'pi0div4' is the third element of the GLMs_forPlotting list
+#            'lon' is the second element of that element  
+pdf(file = "sd_medianTheta_lonBYspecies.pdf")
+plot(x = subset(allDivGeo.rawStar.df, species == "BP")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df, species == "BP")$sd_medianTheta, 
+     xlim = c(min(allDivGeo.rawStar.df$lonwgs84), max(allDivGeo.rawStar.df$lonwgs84)),
+     ylim = c(min(allDivGeo.rawStar.df$sd_medianTheta), max(allDivGeo.rawStar.df$sd_medianTheta)),
+     col = "blue",
+     xlab = "longitude", ylab = "sd_medianTheta", main = "sd_medianTheta vs lon")
+# model for first species
+curve((GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$lonwgs84:y$species1"])*x+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$species1"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "BP")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "BP")$lonwgs84), 
+      lty = "dashed", col = "blue", add = T)
+# dots and modesl for all other species
+points(x = subset(allDivGeo.rawStar.df, species == "FS")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "FS")$sd_medianTheta, 
+       col = "green", pch  = 24)
+curve((GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$lonwgs84:y$species2"])*x+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$species2"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "FS")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "FS")$lonwgs84), 
+      lty = "dashed", col = "green", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PA")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PA")$sd_medianTheta, 
+       col = "darkgreen", pch = 0)
+curve((GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$lonwgs84:y$species3"])*x+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$species3"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PA")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PA")$lonwgs84), 
+      lty = "dashed", col = "darkgreen", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PO")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PO")$sd_medianTheta, 
+       col = "orange", pch = 0)
+curve((GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$lonwgs84:y$species4"])*x+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$species4"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PO")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PO")$lonwgs84), 
+      lty = "dashed", col = "orange", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PP")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PP")$sd_medianTheta, 
+       col = "purple", pch = 2)
+curve((GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$lonwgs84:y$species5"])*x+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$species5"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PP")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PP")$lonwgs84), 
+      lty = "dashed", col = "purple", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "PS")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "PS")$sd_medianTheta, 
+       col = "red", pch = 2)
+curve((GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$lonwgs84"]+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$lonwgs84:y$species6"])*x+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["(Intercept)"]+
+       GLMs_forPlotting[[3]][[2]][[1]]$coefficients["y$species6"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "PS")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "PS")$lonwgs84), 
+      lty = "dashed", col = "red", add = T)
+points(x = subset(allDivGeo.rawStar.df, species == "QP")$lonwgs84,
+       y = subset(allDivGeo.rawStar.df, species == "QP")$sd_medianTheta, 
+       col = "brown", pch = 2)
+curve((GLMs_forPlotting[[3]][[2]][[2]]$coefficients["lonwgs84"])*x+
+       GLMs_forPlotting[[3]][[2]][[2]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, species == "QP")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, species == "QP")$lonwgs84), 
+      lty = "dashed", col = "brown", add = T)
+## NOT USED
+# overall mean
+# curve((GLMs_forPlotting[[3]][[1]][[1]]$coefficients["y$lonwgs84"])*x+
+#        GLMs_forPlotting[[3]][[2]][[1]]$coefficients["(Intercept)"], 
+#       from = min(allDivGeo.rawStar.df$lonwgs84), 
+#       to = max(allDivGeo.rawStar.df$lonwgs84), 
+#       lwd = 2, col = "lightgrey", add = T)
+text(labels = levels(allDivGeo.rawStar.df$species)[6],
+     x = 40,
+     y = 0.01,
+     col = "red")
+dev.off()
+# END OF PLOT for species
+#
+# phylo / geo group models
+pdf(file = "sd_medianTheta_lonBYgroup.pdf")
+plot(x = subset(allDivGeo.rawStar.df, phyloGroups == "gymno" & geoGroups == "boreal")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "gymno" & geoGroups == "boreal")$sd_medianTheta, 
+     xlim = c(min(allDivGeo.rawStar.df$lonwgs84), max(allDivGeo.rawStar.df$lonwgs84)),
+     ylim = c(min(allDivGeo.rawStar.df$sd_medianTheta), max(allDivGeo.rawStar.df$sd_medianTheta)),
+     pch = 24, bg = "slategrey",
+     xlab = "Longitude", ylab = "sd_medianTheta", main = "sd_medianTheta vs lon")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "gymno" & geoGroups == "temperate")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "gymno" & geoGroups == "temperate")$sd_medianTheta, 
+     pch = 24, bg = "white")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "angio" & geoGroups == "boreal")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "angio" & geoGroups == "boreal")$sd_medianTheta, 
+     pch = 21, bg = "slategrey")
+points(x = subset(allDivGeo.rawStar.df, phyloGroups == "angio" & geoGroups == "temperate")$lonwgs84,
+     y = subset(allDivGeo.rawStar.df,  phyloGroups == "angio" & geoGroups == "temperate")$sd_medianTheta, 
+     pch = 21, bg = "white")
+#
+curve((GLMs_forPlotting[[3]][[2]][[5]]$coefficients[2])*x+
+       GLMs_forPlotting[[3]][[2]][[5]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, phyloGroups == "gymno")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, phyloGroups == "gymno")$lonwgs84), 
+      col = "black", lty = "dotted", lwd = 2, add = T)
+curve((GLMs_forPlotting[[3]][[2]][[6]]$coefficients[2])*x+
+       GLMs_forPlotting[[3]][[2]][[6]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, phyloGroups == "angio")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, phyloGroups == "angio")$lonwgs84), 
+      col = "black", lty = "dashed", add = T)
+curve((GLMs_forPlotting[[3]][[2]][[3]]$coefficients[2])*x+
+       GLMs_forPlotting[[3]][[2]][[3]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, geoGroups == "boreal")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, geoGroups == "boreal")$lonwgs84), 
+      col = "black", add = T)
+curve((GLMs_forPlotting[[3]][[2]][[4]]$coefficients[2])*x+
+       GLMs_forPlotting[[3]][[2]][[4]]$coefficients["(Intercept)"], 
+      from = min(subset(allDivGeo.rawStar.df, geoGroups == "temperate")$lonwgs84), 
+      to = max(subset(allDivGeo.rawStar.df, geoGroups == "temperate")$lonwgs84), 
+      col = "gray", lwd = 2, add = T)
+text(labels = c(levels(allDivGeo.rawStar.df$phyloGroups)[2:1],levels(allDivGeo.rawStar.df$geoGroups)),
+     x = c(60,80,0,25),
+     y = c(0.005,0.003,0.009,0))
+dev.off()
+```
