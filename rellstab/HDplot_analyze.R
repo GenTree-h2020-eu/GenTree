@@ -1,6 +1,6 @@
 #finalize HDplot results and create diagnostic plots
 #christian rellstab 2020
-#example on FS samples
+#example on BP samples
 
 #if (!requireNamespace("BiocManager", quietly = TRUE))
 #  install.packages("BiocManager")
@@ -10,9 +10,9 @@ library(data.table)
 rm(list=ls(all=TRUE))
 
 #change settings here
-species <- "FS"
-missing.results <- "Fsylvatica_GM_Oulu_filtered_v2._RENAMED.vcf.miss.lmiss"
-HDplot.results <- "Fsylvatica_GM_Oulu_filtered_v2._RENAMED.depths"
+species <- "BP"
+missing.results <- "Bpendula_GM_Oulu_filtered_v2._RENAMED.vcf.miss.lmiss"
+HDplot.results <- "Bpendula_GM_Oulu_filtered_v2._RENAMED.depths"
 
 #import SNP list with no. of missing data
 missing <- read.table(missing.results, sep="\t", header=TRUE)
