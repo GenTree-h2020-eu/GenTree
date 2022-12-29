@@ -20,6 +20,6 @@ Pinus sylvestris: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602473
 ## Bioinformatic pipeline
 1.	Mapping, https://github.com/GenTree-h2020-eu/GenTree/blob/master/Alignment_commands.txt
 2.	SNP calling, https://github.com/GenTree-h2020-eu/GenTree/blob/master/SNP_calling_commands.txt
-3.	Initial quality control with scikit-allele. Jupyter notebooks available at https://github.com/GenTree-h2020-eu/GenTree/tree/master/cervantesarango/JupyterNotebooks
+3.	Initial quality control with scikit-allele. Jupyter notebooks available at https://github.com/GenTree-h2020-eu/GenTree/tree/master/cervantesarango/JupyterNotebooks. Based on code available at: http://alimanfoo.github.io/2016/06/10/scikit-allel-tour.html and http://alimanfoo.github.io/2015/09/28/fast-pca.html
 4.	Formal variant filtering via GATK
 5.	Filtering of paralog regions
