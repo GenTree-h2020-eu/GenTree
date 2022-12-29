@@ -1,7 +1,7 @@
 # GenTree
 Repository to share and document GenTree H2020 project bioinformatic pipelines. The repository contains code used for genomic analysis of 7 GenTree project species (Betula pendula, Fagus sylvatica, Picea abies, Pinus pinaster, Pinus sylvestris, Populus nigra and Quercus petraea).
 
-Raw short read data:
+## Raw short read data
 
 Picea abies: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602465
 
