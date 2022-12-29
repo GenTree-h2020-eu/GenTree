@@ -27,4 +27,6 @@ Pinus sylvestris: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602473
 5.	Filtering of paralog regions
 6. Genotype filtering
    -  from v3.1 to v5.1: https://github.com/GenTree-h2020-eu/GenTree/blob/master/GenTree_7species_GenotypeSNPfiltering_v5.1.txt
+   -  from v3.1 to v5.3: https://github.com/GenTree-h2020-eu/GenTree/blob/master/GenTree_7species_GenotypeSNPfiltering_v5.3.txt
+   -  from v5.3 to v5.3.1 https://github.com/GenTree-h2020-eu/GenTree/blob/master/GenTree_7species_GenotypeSNPfiltering_v5.3.1.txt
 
