@@ -1,21 +1,21 @@
 # GenTree
-Repository to share and document GenTree H2020 project bioinformatic pipelines. The repository contains code used for genomic analysis of 7 GenTree project species (Betula pendula, Fagus sylvatica, Picea abies, Pinus pinaster, Pinus sylvestris, Populus nigra and Quercus petraea).
+Repository to share and document GenTree H2020 project bioinformatic pipelines. The repository contains code used for genomic analysis of 7 GenTree project species (_Betula pendula, Fagus sylvatica, Picea abies, Pinus pinaster, Pinus sylvestris, Populus nigra_ and _Quercus petraea_).
 
 ## Raw short read data
 
-Picea abies: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602465
+_Picea abies_: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602465
 
-Betula pendula: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602466
+_Betula pendula_: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602466
 
-Quercus petraea: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602467
+_Quercus petraea_: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602467
 
-Pinus pinaster: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602468
+_Pinus pinaster_: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602468
 
-Fagus sylvatica: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602470
+_Fagus sylvatica_: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602470
 
-Populus nigra: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602471
+_Populus nigra_: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602471
 
-Pinus sylvestris: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602473
+_Pinus sylvestris_: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602473
 
 ## Bioinformatic pipeline
 1.	Mapping, https://github.com/GenTree-h2020-eu/GenTree/blob/master/Alignment_commands.txt
