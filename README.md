@@ -16,3 +16,10 @@ Fagus sylvatica: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602470
 Populus nigra: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602471
 
 Pinus sylvestris: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602473
+
+## Bioinformatic pipeline
+1.	Mapping, https://github.com/GenTree-h2020-eu/GenTree/blob/master/Alignment_commands.txt
+2.	Variant and SNP calling
+3.	Initial quality control with scikit-allele. 
+4.	Formal variant filtering via GATK
+5.	Filtering of paralog regions
