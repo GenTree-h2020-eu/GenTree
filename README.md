@@ -38,4 +38,4 @@ As different types of analyses require SNP sets curated and filtered based on th
 - v.5.3 Known other species and clear hybrids removed, samples and SNPs with poor coverage or other low quality removed, organelle contigs removed (described in SNP filtering), Populus nigra clones and cultivars removed.
 - v.5.3.1 Master dataset derived from v.5.3, without samples with incorrect taxon assignment as indicated by genetic analysis for F. sylvatica and Q. petraea, identical to v.5.3 for the other five species.
 - v.5.3.2 Derived from v.5.3.1, excludes Picea abies populations RU_PA_19, RU_PA_20 and RU_PO.
-- v.6.3.1 Only includes four-fold degenerate sites, intron and intergenic sites, SNPs in high LD (1 kb windows, r > 0.5, PLINK v.1.90b4.9, ) were excluded, derived from v.5.3.1.
+- v.6.3.1 Only includes four-fold degenerate sites, intron and intergenic sites, SNPs in high LD (1 kb windows, r > 0.5, PLINK v.1.90b4.9) were excluded, derived from v.5.3.1.
