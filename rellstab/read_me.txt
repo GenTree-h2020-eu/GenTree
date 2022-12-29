@@ -1,8 +1,8 @@
 #how to run HDplot in Python (and Bash and R) for the GenTree data
 #christian rellstab 2020
-#example on FS samples
+#example on BP samples
 
-#we need te following py-scripts
+#we need the following py-scripts
 #HDplot_python.p645.py (plot functions are not working, but we don't care)
 #vcf_to_depth_p645.py
 
