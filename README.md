@@ -30,3 +30,10 @@ Pinus sylvestris: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602473
    -  from v3.1 to v5.3: https://github.com/GenTree-h2020-eu/GenTree/blob/master/GenTree_7species_GenotypeSNPfiltering_v5.3.txt
    -  from v5.3 to v5.3.1 https://github.com/GenTree-h2020-eu/GenTree/blob/master/GenTree_7species_GenotypeSNPfiltering_v5.3.1.txt
 
+## Dataset descriptions
+As different types of analyses require SNP sets curated and filtered based on their specific needs, we provide four versions of SNP sets as vcf files available at (link TBA). Note that since several species were observed to have experienced various levels and extents of hybridization, some admixed populations were included/excluded based on the purpose of a particular analysis. For example, in the analyses of population structure, we aimed to identify the potential admixed individuals and populations. In contrast, admixed individuals and populations can have a disproportionate effect on the measures of diversity and on the site frequency spectrum and were thus excluded from the corresponding analyses. 
+
+- v.5.3 Known other species and clear hybrids removed, samples and SNPs with poor coverage or other low quality removed, organelle contigs removed (described in SNP filtering), Populus nigra clones and cultivars removed.
+- v.5.3.1 Master dataset derived from v.5.3, without samples with incorrect taxon assignment as indicated by genetic analysis for F. sylvatica and Q. petraea, identical to v.5.3 for the other five species.
+- v.5.3.2 Derived from v.5.3.1, excludes Picea abies populations RU_PA_19, RU_PA_20 and RU_PO.
+- v.6.3.1 Only includes four-fold degenerate sites, intron and intergenic sites, SNPs in high LD (1 kb windows, r > 0.5, PLINK v.1.90b4.9, ) were excluded, derived from v.5.3.1.
