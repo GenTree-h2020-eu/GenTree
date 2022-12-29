@@ -1,0 +1,5 @@
+vcftools --gzvcf Bpendula_GM_Oulu_filtered_v2_RENAMED.vcf.gz
+	 --recode-INFO-all
+	 --out Bpendula_GM_v3.1
+	 --recode
+	 --exclude-bed /wrk/Gen_Tree/GenTree_Genome_mapping/GenTree_paralog_filtering_winSize-250_winThresh-0.90_excluded_positions/tmp_tables/BP_HDplot_results_winSize-250_winThresh-0.90_excluded_positions.bed
