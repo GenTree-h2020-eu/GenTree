@@ -19,7 +19,8 @@ Pinus sylvestris: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602473
 
 ## Bioinformatic pipeline
 1.	Mapping, https://github.com/GenTree-h2020-eu/GenTree/blob/master/Alignment_commands.txt
-2.	Variant and SNP calling
+2.	Variant and SNP calling, https://github.com/GenTree-h2020-eu/GenTree/blob/master/SNP_calling_commands.txt
+
 3.	Initial quality control with scikit-allele. 
 4.	Formal variant filtering via GATK
 5.	Filtering of paralog regions
