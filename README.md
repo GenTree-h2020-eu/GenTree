@@ -23,12 +23,11 @@ Pinus sylvestris: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602473
 3.	Initial quality control with scikit-allele. Jupyter notebooks available at https://github.com/GenTree-h2020-eu/GenTree/tree/master/cervantesarango/JupyterNotebooks. Based on code available at: http://alimanfoo.github.io/2016/06/10/scikit-allel-tour.html and http://alimanfoo.github.io/2015/09/28/fast-pca.html
 4.	Formal variant filtering via GATK
     - From raw SNPs to v2: https://github.com/GenTree-h2020-eu/GenTree/tree/master/cervantesarango/GATK_rawSNPs_to_v2
-
 5.	Filtering of paralog regions
     - https://github.com/GenTree-h2020-eu/GenTree/tree/master/rellstab
     - https://github.com/GenTree-h2020-eu/GenTree/blob/master/kastally/paralog_window_filtering/paralog_window_filtering.R
+    - https://github.com/GenTree-h2020-eu/GenTree/tree/master/cervantesarango/ParalogRemoval
 6. Genotype filtering
-   -  from v3.1 to v5.1: https://github.com/GenTree-h2020-eu/GenTree/blob/master/GenTree_7species_GenotypeSNPfiltering_v5.1.txt
    -  from v3.1 to v5.3: https://github.com/GenTree-h2020-eu/GenTree/blob/master/GenTree_7species_GenotypeSNPfiltering_v5.3.txt
    -  from v5.3 to v5.3.1 https://github.com/GenTree-h2020-eu/GenTree/blob/master/GenTree_7species_GenotypeSNPfiltering_v5.3.1.txt
 
