@@ -1,4 +1,11 @@
 # Copyright (C) 2021, 2022 Katharina B. Budde
+# SPDX-License-Identifier: GPL-3.0-only
+# The use and distribution terms for this software are covered by the
+# GNU General Public License v3.0 only (https://www.gnu.org/licenses/gpl-3.0-standalone.html)
+# which can be found in the file LICENSE at the root of this distribution.
+# By using this software in any fashion, you are agreeing to be bound by
+# the terms of this license.
+# You must not remove this notice, or any other, from this software.
 #
 # Description: The purpose of this script is to estimate nucleotide diversity (pi) per population based on a set of folded site frequency spectra (fsfs) derived from resampling stored in tsv files. In our experiments 1000 such files were utilized, hence the name of the script. 
 #
