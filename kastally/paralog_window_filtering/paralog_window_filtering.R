@@ -88,8 +88,13 @@ option_list <-
          )
 
 usage <- "%prog -i input_file -o output_file
-This script takes as input a TSV table with at least 3 columns:
-H, D and pos
+This script takes as input a TSV table with SNPs in rows and at the 4
+following columns:
+
+    - contig: the contig ID
+    - pos:    the position on the contig
+    - H:      the Heterozygosity
+    - D:      the deviation from allele ratio balance.
 
 It will then output the same table with 2 or 3 additional columns:
     - filter: TRUE (retained) or FALSE (excluded), based on H and D
