@@ -1,6 +1,6 @@
 # Paralog window filtering steps
 
-Identification of genomic windows to exclude in two steps to run for each species:
+Identification of genomic windows to exclude in two steps, to run for each species:
 
 1. run `paralog_window_filtering.R` using as input the output of the HDplot analysis ([see here](https://github.com/GenTree-h2020-eu/GenTree/blob/master/rellstab/read_me.txt))
 2. run `compute_excluded_areas.sh` to produce a .bed file with the genomic coordinates of the excluded windows.
