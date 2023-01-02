@@ -38,3 +38,5 @@ As different types of analyses require SNP sets curated and filtered based on th
 - v.5.3.1 Master dataset derived from v.5.3, without samples with incorrect taxon assignment as indicated by genetic analysis for _F. sylvatica_ and _Q. petraea_, identical to v.5.3 for the other five species.
 - v.5.3.2 Derived from v.5.3.1, excludes _Picea abies_ populations RU_PA_19, RU_PA_20 and RU_PO.
 - v.6.3.1 Only includes four-fold degenerate sites, intron and intergenic sites, SNPs in high LD (1 kb windows, r > 0.5, PLINK v.1.90b4.9) were excluded, derived from v.5.3.1.
+
+See https://github.com/GenTree-h2020-eu/GenTree/tree/master/ID_tracks_of_samples to follow the name changes and inclusion/exclusion of samples through the data processign and filtering.
