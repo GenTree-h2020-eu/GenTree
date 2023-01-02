@@ -25,7 +25,7 @@ _Pinus sylvestris_: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA602473
     - From raw SNPs to v2: https://github.com/GenTree-h2020-eu/GenTree/tree/master/cervantesarango/GATK_rawSNPs_to_v2
 5.	Filtering of paralog regions
     - https://github.com/GenTree-h2020-eu/GenTree/tree/master/rellstab
-    - https://github.com/GenTree-h2020-eu/GenTree/blob/master/kastally/paralog_window_filtering/paralog_window_filtering.R
+    - https://github.com/GenTree-h2020-eu/GenTree/tree/master/kastally/paralog_window_filtering
     - from v2 to v3.1 https://github.com/GenTree-h2020-eu/GenTree/tree/master/cervantesarango/ParalogRemoval
 6. Genotype filtering
    -  from v3.1 to v5.3: https://github.com/GenTree-h2020-eu/GenTree/blob/master/GenTree_7species_GenotypeSNPfiltering_v5.3.txt
